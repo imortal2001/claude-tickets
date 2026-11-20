@@ -1057,11 +1057,23 @@ def jira_move(key: str, to: str, only_from: str | None = None, dry_run: bool = F
 PR_URL_RE = re.compile(r"https://github\.com/" + re.escape(W.GH_REPO) + r"/pull/\d+")
 
 
+def _pr_url(rec: dict, name: str) -> str | None:
+    """A PR's URL from a state.json ticket record. Runs write it several ways: {"pr": {"url": …}}, {"pr": {"number": …}},
+    or {"pr": 2518, "pr_url": …} (NJ-102794, 2026-11-20: the bare number crashed the ready-for-review reply)."""
+    v = rec.get(name)
+    if isinstance(v, dict):
+        if v.get("url"):
+            return v["url"]
+        v = v.get("number")
+    if rec.get(f"{name}_url"):
+        return rec[f"{name}_url"]
+    return f"https://github.com/{W.GH_REPO}/pull/{v}" if isinstance(v, int) else None
+
+
 def ready_reply_text(key: str, report: str = "") -> str | None:
     """The owner's "ready for review" reply (owner wording, 2026-11-17). None without a main PR."""
     rec = read_json(_auto_state_path(), {}).get("tickets", {}).get(key) or {}
-    main = (rec.get("pr") or {}).get("url")
-    stg = (rec.get("stg_pr") or {}).get("url")
+    main, stg = _pr_url(rec, "pr"), _pr_url(rec, "stg_pr")
     for line in (report or "").splitlines():   # the run's report names them too: "Main PR: …", "Staging PR: …"
         m = PR_URL_RE.search(line)
         if m and not main and re.match(r"\s*main\b", line, re.I):
