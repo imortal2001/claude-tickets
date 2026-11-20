@@ -303,7 +303,11 @@ def sent_for_review(key: str, row: dict, colids: dict, jira_status: str, fresh: 
     """List cells that move a row from You to the reviewer, or [] when it should stay."""
     f = row["fields"]
     waiting = d._select(f.get(COLS["waiting"]) or {})
-    stale_next = "reply in the thread" in d._rich(f.get(COLS["next"]) or {})[0]   # the step the owner has now done
+    nxt = d._rich(f.get(COLS["next"]) or {})[0]
+    # Next steps the owner's reply makes out of date: "… reply in the thread" (a fix), and the plan report's
+    # "Migrating (Claude Tickets) — …", which the table sync leaves behind when it sets Waiting on = the reviewer
+    # at the move to In Review (NJ-102794 / NJ-102805 kept "Migrating…" after their ready reply, 2026-11-20).
+    stale_next = "reply in the thread" in nxt or nxt.startswith("Migrating")
     if jira_status != "In Review" or not (waiting == "You" or stale_next):
         return []
     # No feedback_open check: when the owner's message is the newest in the thread, any earlier feedback has been
