@@ -1005,11 +1005,12 @@ def post_review_parent(client, key: str, run_thread_ts: str | None = None) -> st
     if not f.exists():
         b.log.warning("no user token: could not post the review parent for %s", key)
         return None
-    summary = (read_json(b.SEEN_FILE, {}).get(key) or {}).get("summary") or key
+    # The team's format (owner request 2026-11-20): the bare Jira link, nothing else, unfurled so the Jira Cloud app
+    # shows the ticket card under it — as the other developers post it. A labelled <url|summary> link got no card.
     from urllib.parse import urlencode
     req = urllib.request.Request("https://slack.com/api/chat.postMessage", data=urlencode({
-        "channel": REVIEW_CHANNEL, "text": f"<{W.JIRA_SITE}/browse/{key}|{summary}>",
-        "unfurl_links": "false"}).encode(), headers={"Authorization": f"Bearer {f.read_text(encoding='utf-8').strip()}"})
+        "channel": REVIEW_CHANNEL, "text": f"{W.JIRA_SITE}/browse/{key}",
+        "unfurl_links": "true"}).encode(), headers={"Authorization": f"Bearer {f.read_text(encoding='utf-8').strip()}"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         r = json.loads(resp.read())
     if not r.get("ok"):

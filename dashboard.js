@@ -677,8 +677,9 @@ function mrkdwn(raw) {
   s = s.replace(/:([a-z0-9_+\-]+):/g, (m, name) => EMOJI[name] || m);
   s = s.replace(/```([\s\S]*?)```/g, (_, c) => `<pre>${c}</pre>`);
   s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  s = s.replace(/&lt;@U[A-Z0-9]+\|([^&]+?)&gt;/g, '<span class="mention">@$1</span>');
-  s = s.replace(/&lt;(https?:(?:[^|&\s]|&amp;)+)\|((?:[^&]|&amp;)+?)&gt;/g, '<a href="$1" target="_blank">$2</a>');
+  // A label may hold any escaped character (legacy&#39;s, &amp;); it ends only at the closing &gt;.
+  s = s.replace(/&lt;@U[A-Z0-9]+\|((?:[^&]|&(?!gt;))+?)&gt;/g, '<span class="mention">@$1</span>');
+  s = s.replace(/&lt;(https?:(?:[^|&\s]|&amp;)+)\|((?:[^&]|&(?!gt;))+?)&gt;/g, '<a href="$1" target="_blank">$2</a>');
   s = s.replace(/&lt;(https?:(?:[^&\s]|&amp;)+)&gt;/g, '<a href="$1" target="_blank">$1</a>');
   s = s.replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>');
   // bare URLs (local runs write plain text, not Slack <url|text>); skip ones already inside a tag
