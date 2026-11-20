@@ -224,11 +224,10 @@ a.chip:hover { color: var(--text); }
   overflow-wrap: anywhere;
 }
 .card > .body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.card > .side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.card > .side { display: flex; flex-direction: column; align-items: flex-end; justify-content: flex-end; gap: 6px; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; justify-content: flex-end; max-width: 300px; }
-.side > .bottom { margin-top: auto; display: flex; gap: 6px; justify-content: flex-end; }
+.side > .bottom { display: flex; gap: 6px; justify-content: flex-end; }
 .side > .bottom:empty { display: none; }
-.side.center { justify-content: center; }
 #ctabs::-webkit-scrollbar { display: none; }
 #ctabs .st { margin-left: 5px; }
 #ctabs .dot.live {
@@ -247,9 +246,9 @@ a.chip:hover { color: var(--text); }
 #lognew { font-weight: 600; }
 @container (max-width: 560px) {
   .card { grid-template-columns: minmax(0, 1fr); }
-  .card > .side { align-items: stretch; }
+  .card > .side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
   .actions { justify-content: flex-start; max-width: none; }
-  .side > .bottom { justify-content: flex-end; }
+  .side > .bottom { justify-content: flex-end; margin: 0 0 0 auto; }
 }
 button:hover { border-color: var(--muted); }
 .today-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 12px; }
@@ -555,9 +554,9 @@ table.tickets td.c-pr a.warn { color: var(--warn); }
   main.with-log #split { display: none; }
   #log { position: fixed; inset: 53px 0 0 0; z-index: 6; }
   .card { grid-template-columns: minmax(0, 1fr); }
-  .card > .side { align-items: stretch; }
+  .card > .side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
   .actions { justify-content: flex-start; max-width: none; }
-  .side > .bottom { justify-content: flex-end; }
+  .side > .bottom { justify-content: flex-end; margin: 0 0 0 auto; }
   input[type=search] { width: 140px; }
 }
 /* ===== 2026-11-20 redesign (owner's Gemini mockup): a layer over the styles above ===== */

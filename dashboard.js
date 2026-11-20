@@ -223,7 +223,7 @@ function card(t) {
     </div>
     ${elsewhere}
     </div>
-    <div class="side${untouched ? " center" : ""}"><div class="actions">${buttons(t)}</div><div class="bottom">${untouched ? "" : `
+    <div class="side"><div class="actions">${buttons(t)}</div><div class="bottom">${untouched ? "" : `
       <button class="chat" data-thread="${CFG.report}|${esc(t.chat_ts || "new:" + t.key)}" data-name="${esc(t.key)} · Chat with Claude"
         title="${t.chat_ts ? "Your chat with Claude about this ticket" : "Start a chat with Claude about this ticket"}">Chat</button>`}${mainAction(t)}</div></div>
   </div>`;
