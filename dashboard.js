@@ -147,6 +147,9 @@ function mainAction(t) {
     return `<button class="primary" data-act="fix" data-key="${k}">Fix Now →</button>`;
   if (t.status === "In Review")
     return `<button class="soft" data-act="review" data-key="${k}" title="Claude re-reviews the PR and reports findings — no code, Jira or Slack changes">Review →</button>`;
+  // Migrate → is a main action too, so it lines up with Review → / Resume → on the right (owner 2026-11-20).
+  if (!resumable && t.status === "OPEN" && !(t.jira_summary || t.summary).toUpperCase().includes("[NEXTJS]"))
+    return `<button class="primary" data-act="migrate" data-key="${k}">Migrate →</button>`;
   return "";
 }
 
@@ -162,9 +165,7 @@ function buttons(t) {
     // only when there is nothing to resume — or new reviewer feedback the unfinished run does not cover.
     // Interrupted (stopped / failed) -> Resume. Ended its turn waiting for an answer -> answer it in the chat with Claude.
     const resumable = r.session_id && ["stopped", "failed", "ended_turn"].includes(r.state);
-    // (Resume → itself sits at the bottom-right, in mainAction.)
-    if (!resumable && t.status === "OPEN" && !(t.jira_summary || t.summary).toUpperCase().includes("[NEXTJS]"))
-      b.push(`<button class="primary" data-act="migrate" data-key="${k}">Migrate →</button>`);
+    // (Resume → and Migrate → sit at the bottom-right, in mainAction, with the other main actions.)
     if (r.session_id) {
       b.push(`<button data-log="${esc(r.session_id)}" data-name="${esc(r.session_name || t.key)}">History CLI</button>`);
     }
