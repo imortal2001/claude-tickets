@@ -148,7 +148,7 @@ function mainAction(t) {
   if (t.status === "In Review")
     return `<button class="soft" data-act="review" data-key="${k}" title="Claude re-reviews the PR and reports findings — no code, Jira or Slack changes">Review →</button>`;
   // Migrate → is a main action too, so it lines up with Review → / Resume → on the right (owner 2026-11-20).
-  if (!resumable && t.status === "OPEN" && !(t.jira_summary || t.summary).toUpperCase().includes("[NEXTJS]"))
+  if (!resumable && t.status === "OPEN" && !isNextjs(t))
     return `<button class="primary" data-act="migrate" data-key="${k}">Migrate →</button>`;
   return "";
 }
@@ -161,16 +161,11 @@ function buttons(t) {
   } else if (r.state === "queued") {
     b.push(`<button class="danger" data-act="stop" data-key="${k}">Remove from queue</button>`);
   } else {
-    // An unfinished run is continued with Resume (same session, keeps its work). A fresh start is offered
-    // only when there is nothing to resume — or new reviewer feedback the unfinished run does not cover.
-    // Interrupted (stopped / failed) -> Resume. Ended its turn waiting for an answer -> answer it in the chat with Claude.
-    const resumable = r.session_id && ["stopped", "failed", "ended_turn"].includes(r.state);
-    // (Resume → and Migrate → sit at the bottom-right, in mainAction, with the other main actions.)
+    // Resume →, Migrate → and the other main actions sit at the bottom-right, in mainAction.
     if (r.session_id) {
       b.push(`<button data-log="${esc(r.session_id)}" data-name="${esc(r.session_name || t.key)}" title="Open this run's session transcript">History</button>`);
     }
   }
-  const rt = t.review_thread;
   return b.join("");
 }
 
@@ -187,7 +182,7 @@ function replyTodo(t) {
   const merge = stg.length ? `merge + deploy staging PR ${stg.map((s) => `<a href="${esc(s.url)}" target="_blank">#${s.number}</a>`).join(", ")}, then ` : "";
   const reply = t.reply.has_thread && t.review_thread
     ? `<button class="rowlink act" ${threadAttrs(t)} title="Open the review thread">reply in the review thread</button>`
-    : "post the review request in #nativecamp-next-migration";
+    : `post the review request in ${esc(CFG.reviewName || "the review channel")}`;
   return `✅ ${what} ${esc(t.reply.finished)} → ${merge}${reply}`;
 }
 function card(t) {
@@ -292,7 +287,7 @@ function applyScrollMem(m) {
   if (c) L.scrollTop += (c.getBoundingClientRect().top - L.getBoundingClientRect().top) - m.a.off;
   lastAnchor = listAnchor();
 }
-// ---- Today: what we did on the day, as the lines for #report-next-migration (owner request 2026-11-16)
+// ---- Today: what we did on the day, as the lines for the daily report channel (owner request 2026-11-16)
 const pad2 = (n) => String(n).padStart(2, "0");
 const localDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 let todayDate = localDay(new Date()), todayData = null, todayLoading = false;
@@ -322,9 +317,9 @@ function renderToday() {
   if (!todayData) { $("list").innerHTML = nav + '<div class="empty">Collecting the day — runs, Jira and PRs…</div>'; return; }
   if (todayData.error) { $("list").innerHTML = nav + `<div class="note">Could not build the report: <code>${esc(todayData.error)}</code></div>`; return; }
   const lines = todayData.lines || [];
-  const sent = todayData.posted ? "Sent to #claude-report ✓" : isToday ? "Goes to #claude-report at 17:40 (weekdays)" : "";
+  const sent = todayData.posted ? `Sent to ${CFG.reportName} ✓` : isToday ? `Goes to ${CFG.reportName} at 17:40 (weekdays)` : "";
   const rep = `<section class="rep"><div class="rep-top"><b>${esc(todayData.day)} REPORT</b>
-      <span class="muted">Paste into today's thread in #report-next-migration${sent ? " · " + esc(sent) : ""}</span>
+      <span class="muted">Paste into today's thread in ${esc(CFG.dailyName || "")}${sent ? " · " + esc(sent) : ""}</span>
       <button class="primary" id="copyrep" ${lines.length ? "" : "disabled"}>Copy</button></div>
     <pre id="replines">${lines.length ? esc(lines.join("\n")) : isToday ? "Nothing to report yet." : "Nothing to report for this day."}</pre></section>`;
   const errs = (todayData.errors || []).length ? `<div class="note">Some sources could not be read: ${esc(todayData.errors.join(", "))}</div>` : "";
@@ -389,9 +384,11 @@ function visibleClassified() {
   }
   return visMemo;
 }
+// A Next.js template ticket ("[NEXTJS]" in its summary): hidden by "Hide Next.js" and never offered Migrate →.
+const isNextjs = (t) => (t.jira_summary || t.summary || "").toUpperCase().includes("[NEXTJS]");
 function visibleTickets() {
   const hide = $("hideSkip").checked;
-  return (data ? data.tickets : []).filter((t) => !hide || !(t.jira_summary || t.summary).toUpperCase().includes("[NEXTJS]"));
+  return (data ? data.tickets : []).filter((t) => !hide || !isNextjs(t));
 }
 function sidebar() {
   if (!data) return;
@@ -436,7 +433,7 @@ function renderView() {
   health();
   const q = $("q").value.trim().toLowerCase(), hide = $("hideSkip").checked;
   const rows = data.tickets.filter((t) =>
-    (!hide || !(t.jira_summary || t.summary).toUpperCase().includes("[NEXTJS]")) &&
+    (!hide || !isNextjs(t)) &&
     (!q || (t.key + " " + t.summary).toLowerCase().includes(q)));
   const c = classify(rows), {isLive, replyDue, reviewWait} = c;
   // 1) In progress: Claude is working on it now. 2) Feedback waiting: a reviewer asked for changes and nothing has
@@ -704,7 +701,7 @@ function openThread(ref, name) {
   $("reply").classList.add("on");
   $("replytext").placeholder = threadChat ? "Reply to Claude…" : "Reply in the review thread…";
   $("replyhint").textContent = threadChat ? "↩ to send · ⇧↩ new line · continues this ticket's Claude session"
-                                          : "@ to mention · ↩ to send · ⇧↩ new line · posts as you in #nativecamp-next-migration";
+                                          : `@ to mention · ↩ to send · ⇧↩ new line · posts as you in ${CFG.reviewName}`;
   $("logbody").className = threadChat ? "chat" : "thread";
   threadInfo(name.split(" ")[0]);
   $("logbody").innerHTML = '<div class="empty">Loading…</div>'; delete $("logbody").dataset.sig;
@@ -1054,7 +1051,7 @@ async function sendReply(e) {
   if (!text) return;
   // The team thread is seen by others, so it asks first; the chat is a conversation with Claude.
   if (!threadChat && !(await askConfirm({kicker: "Team review thread", title: "Send this reply as you?", ok: "Send",
-      text: "It posts in #nativecamp-next-migration, where the team can see it.",
+      text: `It posts in ${CFG.reviewName}, where the team can see it.`,
       quote: text.length > 600 ? text.slice(0, 600) + "…" : text}))) return;
   $("replysend").disabled = true;
   if (await postReply(text)) { $("replytext").value = ""; $("replytext").style.height = ""; }

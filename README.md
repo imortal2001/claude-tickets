@@ -169,6 +169,7 @@ Fill it in. Git ignores it, so your IDs never get committed.
 | `slack.report_channel` | your private channel: channel details → bottom of **About** |
 | `slack.review_channel` | the team review channel, the same way |
 | `slack.daily_report_channel` | the channel whose thread you paste the daily report into |
+| `slack.*_channel_name` (optional) | the three channels' names, shown in messages (`claude-report` → "#claude-report"); without them the app says "the report channel" and so on |
 | `slack.ticket_list` | your Slack List: the `F…` id in its link |
 | `slack.ticket_list_columns` | each column's `Col…` id (read them with `slackLists.items.list`). Keep `thread` as is |
 | `reviewer.name` | the reviewer's name as you write it in messages (`Hello, @<name> -san`) |
@@ -351,7 +352,8 @@ Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** 
   ```bash
   launchctl kickstart -k gui/$(id -u)/local.claude-slack-bridge
   ```
-- `dashboard.py`, `watch.py` and the dashboard files reload on their own.
+- `dashboard.py`, `watch.py` and the dashboard files reload on their own. `workspace.json` is read once at start:
+  restart the bridge after editing it. A missing key stops the bridge with a message naming it (`launchd.err.log`).
 - Runtime files (`jobs.json`, `runlog.json`, logs, `addons/`, `run_settings.json`, …) stay out of git.
 
 ## Rules for changing the code

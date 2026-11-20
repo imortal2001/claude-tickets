@@ -27,6 +27,10 @@ from pathlib import Path
 
 import workspace as W
 
+# The bridge live-reloads this module; reload its settings with it, so the module and its settings never come from
+# different versions (watch.py shares this same module object).
+importlib.reload(W)
+
 PORT = 8790
 HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 HERE = Path(__file__).resolve().parent
@@ -540,7 +544,7 @@ def plan_to_table(key: str, text: str) -> None:
     else:
         return
     try:
-        what = table_update(key, waiting, f"Migrating (Claude Tickets) — {nxt}" if waiting == "you" and nxt else nxt or None)
+        what = table_update(key, waiting, f"{MIGRATING_NEXT} — {nxt}" if waiting == "you" and nxt else nxt or None)
     except Exception as exc:
         what = f"failed ({type(exc).__name__})"
     b.log.info("plan report of %s → table %s", key, what)
@@ -673,14 +677,14 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
 
 # ---------- Slack threads and files (read only) ----------
 
-REVIEW_CHANNEL = W.REVIEW_CHANNEL   # #nativecamp-next-migration — read with the owner's user token
+REVIEW_CHANNEL = W.REVIEW_CHANNEL   # the review channel — read with the owner's user token
 TS_RE = re.compile(r"^\d{10}\.\d{6}$")
 FILE_RE = re.compile(r"^F[A-Z0-9]{6,}$")
 _names: dict = {}
 
 
 def token_for(channel: str) -> str | None:
-    """#claude-report: the bot. The team review channel: the owner's user token (the bot is not in it)."""
+    """the report channel: the bot. The team review channel: the owner's user token (the bot is not in it)."""
     name = "slack-user-token" if channel == REVIEW_CHANNEL else "slack-bot-token"
     f = b.SECRETS / name
     return f.read_text(encoding="utf-8").strip() if f.exists() else None
@@ -898,7 +902,7 @@ def start_chat(key: str, text: str, fresh: bool = False) -> tuple:
 
 
 def post_reply(channel: str, ts: str, text: str) -> tuple[bool, str]:
-    """Post the owner's own reply into a ticket thread, as the owner (user token). In #claude-report the
+    """Post the owner's own reply into a ticket thread, as the owner (user token). In the report channel the
     bridge then sees an owner reply and continues that ticket's Claude session, as with a Slack reply."""
     if channel == b.CHANNEL and ts.startswith(("new:", "fresh:")):
         kind, key = ts.split(":", 1)
@@ -964,7 +968,7 @@ def remember_review_thread(key: str, ts: str) -> None:
 
 
 def find_review_thread(key: str) -> str | None:
-    """The ticket's parent message in #nativecamp-next-migration, if one exists (recorded, or in recent history)."""
+    """The ticket's parent message in the review channel, if one exists (recorded, or in recent history)."""
     rec = (read_json(_auto_state_path(), {}).get("tickets", {}).get(key) or {}).get("review_thread")
     if rec:
         return rec["ts"]
@@ -1009,11 +1013,11 @@ def post_review_parent(client, key: str, run_thread_ts: str | None = None) -> st
         return None
     ts = r["ts"]
     remember_review_thread(key, ts)
-    b.log.info("posted the review parent for %s in #nativecamp-next-migration (%s)", key, ts)
+    b.log.info("posted the review parent for %s in %s (%s)", key, W.REVIEW_NAME, ts)
     if run_thread_ts:
-        b.post(client, run_thread_ts, f"🧵 Posted the review thread's parent in #nativecamp-next-migration: "
-                                      f"<{W.SLACK_URL}/archives/{REVIEW_CHANNEL}/p{ts.replace('.', '')}|{key}>. "
-                                      "After you merge + deploy staging, reply there from Claude Tickets (Open thread).")
+        # The ready-for-review reply follows on its own (post_ready_reply), so this only says where the thread is.
+        b.post(client, run_thread_ts, f"🧵 Posted {key} in {W.REVIEW_NAME}: "
+                                      f"<{W.SLACK_URL}/archives/{REVIEW_CHANNEL}/p{ts.replace('.', '')}|{key}>.")
     return ts
 
 
@@ -1046,12 +1050,15 @@ def jira_move(key: str, to: str, only_from: str | None = None, dry_run: bool = F
     return f"moved {now} → {to}"
 
 
+# The Next step a migration's plan report writes; the watch replaces it once the ticket is sent for review.
+MIGRATING_NEXT = "Migrating (Claude Tickets)"
 PR_URL_RE = re.compile(r"https://github\.com/" + re.escape(W.GH_REPO) + r"/pull/\d+")
 
 
 def _pr_url(rec: dict, name: str) -> str | None:
     """A PR's URL from a state.json ticket record. Runs write it several ways: {"pr": {"url": …}}, {"pr": {"number": …}},
-    or {"pr": 2518, "pr_url": …} (NJ-102794, 2026-11-20: the bare number crashed the ready-for-review reply)."""
+    or {"pr": 2518, "pr_url": …} (NJ-102794, 2026-11-20: the bare number crashed the ready-for-review reply).
+    The runbook's empty shape {"number": 0, "url": ""} means "no PR", never /pull/0."""
     v = rec.get(name)
     if isinstance(v, dict):
         if v.get("url"):
@@ -1059,7 +1066,9 @@ def _pr_url(rec: dict, name: str) -> str | None:
         v = v.get("number")
     if rec.get(f"{name}_url"):
         return rec[f"{name}_url"]
-    return f"https://github.com/{W.GH_REPO}/pull/{v}" if isinstance(v, int) else None
+    if isinstance(v, str) and v.strip().lstrip("#").isdigit():
+        v = int(v.strip().lstrip("#"))
+    return f"https://github.com/{W.GH_REPO}/pull/{v}" if type(v) is int and v > 0 else None
 
 
 def ready_reply_text(key: str, report: str = "") -> str | None:
@@ -1316,7 +1325,7 @@ def fetch_people() -> dict:
         cursor = (r.get("response_metadata") or {}).get("next_cursor")
         if not cursor:
             break
-    # who speaks (or is mentioned) in #nativecamp-next-migration lately ranks first
+    # who speaks (or is mentioned) in the review channel lately ranks first
     try:
         h = slack_get(token, "conversations.history", channel=REVIEW_CHANNEL, limit=200)
         for m in h.get("messages") or []:
@@ -1633,7 +1642,7 @@ def today_report(day: str | None = None) -> dict:
 
 
 def report_label(evs: list, t: dict, threads: dict, key: str) -> str | None:
-    """The owner's wording in #report-next-migration ("NJ-102235: Fix FB", "NJ-101032: Migration", "… in review",
+    """The owner's wording in the daily report channel ("NJ-102235: Fix FB", "NJ-101032: Migration", "… in review",
     "… in progress"). None = nothing worth reporting (e.g. only a chat)."""
     modes = {e.get("mode") for e in evs if e["kind"] == "run"}
     if "migrate" in modes or "start" in modes:
@@ -1665,7 +1674,7 @@ def report_lines(rep: dict) -> list[str]:
 
 
 def daily_text(rep: dict) -> str:
-    """For #claude-report at 17:40: the lines to paste into today's thread in #report-next-migration."""
+    """For the report channel at 17:40: the lines to paste into today's thread in the daily report channel."""
     lines = report_lines(rep)
     head = f"📋 *{rep['day']} REPORT* — ready to paste in <#{W.DAILY_CHANNEL}>'s thread"
     if not lines:
@@ -1675,7 +1684,7 @@ def daily_text(rep: dict) -> str:
 
 
 def daily_post(slack_client, day: str | None = None) -> bool:
-    """Posts the day's report to #claude-report (called by the bridge at 17:40 on weekdays)."""
+    """Posts the day's report to the report channel (called by the bridge at 17:40 on weekdays)."""
     rep = today_report(day)
     text = daily_text(rep)
     if len(text) > 39000:

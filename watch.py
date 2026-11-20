@@ -31,7 +31,7 @@ STATE_FILE = AUTO / "state.json"
 ACTIVITY = AUTO / "activity.log"
 LOCK = AUTO / "runner.lock"
 VERDICTS = AUTO / "slack-bridge" / "watch-verdicts.json"   # Claude's YES/NO per message ts, so no message is asked twice
-REVIEW = W.REVIEW_CHANNEL                      # #nativecamp-next-migration
+REVIEW = W.REVIEW_CHANNEL                      # the review channel
 LIST_ID = W.LIST_ID
 COLS: dict = {}
 
@@ -259,7 +259,7 @@ def owns_thread(key: str, ts: str) -> bool:
 
 
 def review_thread(key: str, row: dict | None = None) -> str | None:
-    """The ticket's thread in #nativecamp-next-migration: state.json, the List's Thread cell, or the channel —
+    """The ticket's thread in the review channel: state.json, the List's Thread cell, or the channel —
     never another ticket's thread (see owns_thread)."""
     rec = (load_state().get("tickets", {}).get(key) or {}).get("review_thread")
     if rec and owns_thread(key, rec["ts"]):
@@ -299,16 +299,22 @@ def kind_of(key: str, info: dict) -> str:
 # owner's reply is the newest message in the ticket's review thread, with the ticket In Review and no open feedback,
 # the ball is with the reviewer: Waiting on = the reviewer, Next step = "Sent for review <time> — waiting for <reviewer>-san".
 
+# The Next step a move to In Review writes before the owner has replied in the thread.
+IN_REVIEW_NEXT = f"In Review — waiting for {W.REVIEWER}-san"
+
+
+def stale_next(nxt: str) -> bool:
+    """Next steps that sending the ticket for review makes out of date: a fix's "… reply in the thread", the plan
+    report's "Migrating (Claude Tickets) — …", and the In Review placeholder (NJ-102794 / NJ-102805, 2026-11-20)."""
+    return "reply in the thread" in nxt or nxt.startswith(d.MIGRATING_NEXT) or nxt == IN_REVIEW_NEXT
+
+
 def sent_for_review(key: str, row: dict, colids: dict, jira_status: str, fresh: bool = False) -> list:
     """List cells that move a row from You to the reviewer, or [] when it should stay."""
     f = row["fields"]
     waiting = d._select(f.get(COLS["waiting"]) or {})
     nxt = d._rich(f.get(COLS["next"]) or {})[0]
-    # Next steps the owner's reply makes out of date: "… reply in the thread" (a fix), and the plan report's
-    # "Migrating (Claude Tickets) — …", which the table sync leaves behind when it sets Waiting on = the reviewer
-    # at the move to In Review (NJ-102794 / NJ-102805 kept "Migrating…" after their ready reply, 2026-11-20).
-    stale_next = "reply in the thread" in nxt or nxt.startswith("Migrating")
-    if jira_status != "In Review" or not (waiting == "You" or stale_next):
+    if jira_status != "In Review" or not (waiting == d.LABELS["you"] or stale_next(nxt)):
         return []
     # No feedback_open check: when the owner's message is the newest in the thread, any earlier feedback has been
     # answered (NJ-101597 stayed on You on 2026-11-19 because the flag from the 10:09 feedback was still set).
@@ -426,12 +432,12 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
                               _cell(colids, "waiting", rid, select="skip")]
             out["removed"].append(key)
             continue
+        to_review = False
         if info["status"] and cur_status != info["status"]:
             sel = {"OPEN": "open", "Dev In Progress": "dev_in_progress", "In Review": "in_review", "Blocked": "blocked"}.get(info["status"])
             if sel:
                 cells.append(_cell(colids, "status", rid, select=sel))
-                if sel == "in_review":
-                    cells.append(_cell(colids, "waiting", rid, select=W.REVIEWER_OPTION))
+                to_review = sel == "in_review"
                 out["changed"].append(f"{key} → {info['status']}")
         # PR: fill from Jira's v2 PR field when the row has none, and refresh its state.
         pr_text, pr_url = d._rich(f.get(COLS["pr"]) or {})
@@ -461,6 +467,10 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
         if moved:
             cells += moved
             out.setdefault("waiting", []).append(key)
+        elif to_review:   # In Review before the owner's reply: the reviewer's turn, and Next says so
+            cells.append(_cell(colids, "waiting", rid, select=W.REVIEWER_OPTION))
+            if stale_next(d._rich(f.get(COLS["next"]) or {})[0]):
+                cells.append(_cell(colids, "next", rid, text=IN_REVIEW_NEXT))
         # Thread: fill "No thread yet" once the thread exists.
         t_text, t_url = d._rich(f.get(COLS["thread"]) or {})
         if not t_url:
@@ -606,7 +616,7 @@ def feedback_watch(dry: bool = False) -> tuple[bool, str]:
         changed = table["added"] or table["changed"] or table["removed"]
         if found:
             line = "; ".join(f"There's a feedback on {k}{f' ({n} items)' if n else ''}" for k, n in found)
-            line += " — notice posted to #claude-report" + ("" if not dry else " (dry run: not posted)")
+            line += f" — notice posted to {W.REPORT_NAME}" + ("" if not dry else " (dry run: not posted)")
         else:
             line = "No new feedback."
         if changed or found:

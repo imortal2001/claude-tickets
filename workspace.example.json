@@ -4,8 +4,11 @@
     "owner_user": "U… your Slack user id",
     "bot_user": "U… the bridge app's bot user id",
     "report_channel": "C… private channel for runs and chats",
+    "report_channel_name": "your-report-channel (optional, for messages)",
     "review_channel": "C… team channel with the review threads",
+    "review_channel_name": "your-review-channel (optional)",
     "daily_report_channel": "C… channel for the daily report",
+    "daily_report_channel_name": "your-daily-report-channel (optional)",
     "ticket_list": "F… your Slack List of tickets",
     "ticket_list_columns": {
       "ticket": "Col… id of the List's column",

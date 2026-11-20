@@ -244,6 +244,8 @@ a.chip:hover { color: var(--text); }
 #log .pin summary { cursor: pointer; color: var(--muted); }
 #log .pin .c-text { margin-top: 6px; }
 #lognew { font-weight: 600; }
+/* stacked cards when the side panel leaves the list narrow. The same four rules repeat in @media (max-width: 760px)
+   below for a narrow window: CSS cannot share one block between a container and a media query. Edit both. */
 @container (max-width: 560px) {
   .card { grid-template-columns: minmax(0, 1fr); }
   .card > .side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
@@ -553,6 +555,7 @@ table.tickets td.c-pr a.warn { color: var(--warn); }
   main.with-log { grid-template-columns: minmax(0, 1fr); }
   main.with-log #split { display: none; }
   #log { position: fixed; inset: 53px 0 0 0; z-index: 6; }
+  /* stacked cards in a narrow window: the twin of the @container (max-width: 560px) block above. Edit both. */
   .card { grid-template-columns: minmax(0, 1fr); }
   .card > .side { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
   .actions { justify-content: flex-start; max-width: none; }

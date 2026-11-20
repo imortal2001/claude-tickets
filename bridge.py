@@ -82,7 +82,7 @@ def model_args(s: dict | None = None) -> list[str]:
 RUNBOOK = HOME / ".claude" / "jira-automation" / "RUNBOOK.md"
 
 OWNER = workspace.OWNER  # the only Slack user allowed to command the bridge
-CHANNEL = workspace.REPORT_CHANNEL  # #claude-report (private)
+CHANNEL = workspace.REPORT_CHANNEL  # the report channel (private)
 KEY_RE = re.compile(r"^NJ-\d{4,6}$")
 SLACK_BLOCK_RE = re.compile(r"```slack\s*\n(.*?)```", re.S)
 MAX_SLACK = 3800
@@ -1168,7 +1168,7 @@ def run_feedback_watch() -> tuple[bool, str]:
 
 # ---------- review-channel events (owner request 2026-11-17) ----------
 # The Claude Report app subscribes to message.channels / message.groups ON BEHALF OF THE OWNER (user events), so every
-# message in #nativecamp-next-migration reaches the bridge over Socket Mode the moment it is posted. The bot is not in
+# message in the review channel reaches the bridge over Socket Mode the moment it is posted. The bot is not in
 # the channel and posts nothing there. A message drops the board's cached copy of its thread and re-checks at once:
 # the card moves, and a reviewer reply starts the feedback watch (dashboard.state → trigger_watch). Polling stays only
 # as a safety net (WATCH_CHECK_SECONDS).
@@ -1249,7 +1249,7 @@ DAILY_AT = (17, 40)   # local time, weekdays (owner decision 2026-11-16)
 
 
 def daily_report_loop(client) -> None:
-    """At 17:40 on weekdays: the day's report lines for #report-next-migration, posted to #claude-report.
+    """At 17:40 on weekdays: the day's report lines for the daily report channel, posted to the report channel.
     The content lives in dashboard.daily_post (live-reloaded); a late start the same evening still posts once."""
     while True:
         try:
@@ -1408,7 +1408,7 @@ def build_app() -> App:
             ack(local_facts(arg))
             threading.Thread(target=status_one, args=(client, arg), daemon=True).start()
         else:
-            ack("_Checking Jira, GitHub and the Claude sessions… (about a minute; the answer appears in #claude-report, only for you)_")
+            ack("_Checking Jira, GitHub and the Claude sessions… (about a minute; the answer appears in " + workspace.REPORT_NAME + ", only for you)_")
             threading.Thread(target=status_all, args=(client,), daemon=True).start()
 
     @app.command("/migrate")
