@@ -1,0 +1,19 @@
+# runtime state and logs — live data, not code
+jobs.json
+jobs.json.*
+runlog.json
+runlog.json.*
+run_settings.json
+jira-seen.json
+watch-last-run.txt
+watch-verdicts.json
+daily-report-last.txt
+*.log
+addons/
+__pycache__/
+*.command
+# the hand-made copies from before this repo (kept on disk, not tracked)
+_old-backups/
+*.bak*
+# the owner workspace IDs (workspace.example.json is the shareable template)
+workspace.json

@@ -1,0 +1,37 @@
+{
+  "slack": {
+    "workspace": "your-workspace (the part before .slack.com)",
+    "owner_user": "U… your Slack user id",
+    "bot_user": "U… the bridge app's bot user id",
+    "report_channel": "C… private channel for runs and chats",
+    "review_channel": "C… team channel with the review threads",
+    "daily_report_channel": "C… channel for the daily report",
+    "ticket_list": "F… your Slack List of tickets",
+    "ticket_list_columns": {
+      "ticket": "Col… id of the List's column",
+      "summary": "Col… id of the List's column",
+      "status": "Col… id of the List's column",
+      "kind": "Col… id of the List's column",
+      "pr": "Col… id of the List's column",
+      "pr_state": "Col… id of the List's column",
+      "deadline": "Col… id of the List's column",
+      "waiting": "Col… id of the List's column",
+      "next": "Col… id of the List's column",
+      "thread": "thread"
+    }
+  },
+  "reviewer": {
+    "name": "Reviewer's name as written in messages",
+    "slack_user": "U… reviewer's Slack user id",
+    "list_option": "the List's Waiting on option id for the reviewer"
+  },
+  "jira": {
+    "site": "https://your-site.atlassian.net",
+    "cloud_id": "Atlassian cloud id",
+    "v2_pr_field": "customfield_… (main PR URL field)"
+  },
+  "github": {
+    "repo": "owner/name",
+    "local_checkout": "~/path/to/your/checkout"
+  }
+}
