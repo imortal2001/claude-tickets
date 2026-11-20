@@ -11,8 +11,8 @@ the reviewer leaves feedback, lets you start the fix with one click, and keeps y
 2. **Runs Claude Code on a ticket.** You click **Migrate**, **Fix now** or **Review**. A headless Claude Code
    session works the ticket in your project checkout, one ticket at a time, while you follow it in the ticket's
    chat. You can add notes while it works, stop it and resume it.
-3. **Hands it to review.** When a migration is done, the run posts the ticket in the team review channel and
-   moves it to In Review in Jira.
+3. **Hands it to review.** When a migration is done, the run moves the ticket to In Review in Jira, and the app
+   posts it in the team review channel with a "ready for review" reply.
 4. **Watches the review.** It reads the review threads. When the reviewer leaves feedback, the ticket moves to
    **Action needed** so you can start the fix. When you reply, it goes back to waiting on the reviewer.
 5. **Keeps your table in sync.** Your Slack List of tickets gets the Jira status, PR, deadline, who it is waiting
@@ -247,7 +247,8 @@ was built with tells each run to do, so you can see what to write in yours.
 - It never touches a branch that another live Claude session is using. It stashes your uncommitted changes
   and puts them back when it's done.
 - A page that would need a **new API** is not built: it's reported instead, and the ticket stays OPEN.
-- It doesn't post in team threads. The only team-channel post is the app's automatic "ready for review" message.
+- It doesn't post in team threads. The only team-channel posts are the app's, after a migration: the ticket's
+  Jira link and the "ready for review" reply in its thread.
 
 ### Migrate →
 **Shows on:** an OPEN ticket with no unfinished run.
@@ -263,9 +264,10 @@ was built with tells each run to do, so you can see what to write in yours.
    review finds and reviews again, at most 3 rounds. Only a clean review moves on.
 6. **Opens a draft PR** to `main`, then a **staging PR** with the same commits. It never merges either.
 7. **Moves Jira to In Review.** If Jira's PR-link field is empty, it fills it with the main PR's link first.
-8. **Reports** "<KEY> is migrated" with the routes or summary. The app then posts the ticket in the team review
-   channel, replies in that thread asking the reviewer to review (with the main and staging PR links), and the
-   ticket moves to **Waiting for review**.
+8. **Reports** "<KEY> is migrated" with the routes or summary. The app then posts the ticket's bare Jira link in
+   the team review channel (Slack's Jira app adds the ticket card, as when a teammate posts it), replies in that
+   thread asking the reviewer to review (with the main and staging PR links), and the ticket moves to
+   **Waiting for review**. If either post fails, the run's chat says so, and you can reply from the thread panel.
 
 ### Fix Now →
 **Shows on:** a ticket with new reviewer feedback (it's under **Action needed**), or one that is Dev In Progress

@@ -1129,9 +1129,19 @@ def on_job_finished(client=None, key: str = "", kind: str = "", mode: str = "", 
     # A migrate thread's later turns (Resume →, auto-resume, a reply) reach here as mode "reply" — the thread has no mode
     # of its own — so they count too (NJ-101597 finished through Resume → and its parent was skipped, 2026-11-17).
     if mode in ("start", "migrate", "reply", None, "") and kind in ("start", "reply") and " is migrated" in first and KEY_RE.match(key):
-        review_ts = post_review_parent(client, key, thread_ts)
-        if review_ts:
-            post_ready_reply(client, key, review_ts, text, thread_ts)
+        # A failure here says so in the run's chat (NJ-102794, 2026-11-20: the reply crashed and only launchd.err.log knew).
+        try:
+            review_ts = post_review_parent(client, key, thread_ts)
+            if not review_ts:
+                b.post(client, thread_ts, "⚠️ Could not post the review thread's parent (bridge.log says why). "
+                                          "Post the ticket's Jira link in the review channel yourself.")
+            elif not post_ready_reply(client, key, review_ts, text, thread_ts):
+                b.post(client, thread_ts, "⚠️ Could not post the \"ready for review\" reply (no main PR found, or Slack refused; "
+                                          "bridge.log says why). Reply in the review thread from Claude Tickets.")
+        except Exception as exc:
+            b.log.exception("ready-for-review step failed for %s", key)
+            b.post(client, thread_ts, f"⚠️ The ready-for-review step failed ({type(exc).__name__}). "
+                                      "Reply in the review thread from Claude Tickets.")
     # A finished /fix round updates the ticket table's Waiting on + Next step (owner request 2026-11-17).
     # ("fix them now" answered in a Review → chat runs a fix round in that review conversation, mode "review")
     if mode in ("fix", "review") and KEY_RE.match(key or ""):
