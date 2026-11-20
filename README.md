@@ -231,19 +231,115 @@ It starts at login and restarts itself if it stops.
 
 ---
 
-## Using it
+## The buttons
 
-Everything happens in the dashboard:
+Every action starts from the dashboard. A card only shows the buttons that make sense for the ticket's state.
+Before a run starts, a confirm dialog shows the model and effort it will use; a change there applies to that run only.
 
-| Button | Does |
-|---|---|
-| **Migrate** | starts a run on the ticket (or queues it behind the running one) |
-| **Fix now** | fixes the reviewer's latest feedback |
-| **Review** | has Claude re-review the ticket's PR while it waits for the reviewer (report only, changes nothing) |
-| **Stop** / **Resume** | stops the running session; resumes a stopped or failed one |
-| **Chat** | talks to Claude about the ticket; while a run works, your message is passed to it as a note |
-| **Thread** | opens the ticket's review thread; you can reply as yourself |
-| **Models** | picks the model and effort for each kind of run |
+What each run does comes from **your** `RUNBOOK.md` (setup step 7). The facts below are what the runbook this app
+was built with tells each run to do, so you can see what to write in yours.
+
+**Rules every run follows**
+- It never stops to ask. Each decision takes the recommended option and is written into the PR record, so you or
+  the reviewer can overturn it.
+- It never merges into `main` and never force-pushes. It opens the staging PR but never merges it; you merge and deploy.
+- It moves Jira only along the allowed transitions, and never to For Release or Closed.
+- It never touches a branch that another live Claude session is using. It stashes your uncommitted changes
+  and puts them back when it's done.
+- A page that would need a **new API** is not built: it's reported instead, and the ticket stays OPEN.
+- It doesn't post in team threads. The only team-channel post is the app's automatic "ready for review" message.
+
+### Migrate →
+**Shows on:** an OPEN ticket with no unfinished run.
+
+1. **Investigates first.** It reads the ticket, the legacy source and the tracking sheet, and writes a brief.
+2. **Decides go or no-go.** If the ticket needs a new API, it's a no-go: Jira stays OPEN, and the reason goes in the chat.
+   On a go, Jira moves **OPEN → Dev In Progress**.
+3. **Posts a plan report** in the ticket's chat: the kind of ticket (frontend page, middleware, API), the routes,
+   the APIs, the legacy source, the decisions it took and what to watch out for. The table row becomes
+   Waiting on = You, Next step = "Migrating…".
+4. **Builds it** with the project's own migration command for that kind of ticket.
+5. **Reviews it** with the project's reviewers and checks (visual comparison, tests, lint). It fixes what the
+   review finds and reviews again, at most 3 rounds. Only a clean review moves on.
+6. **Opens a draft PR** to `main`, then a **staging PR** with the same commits. It never merges either.
+7. **Moves Jira to In Review.** If Jira's PR-link field is empty, it fills it with the main PR's link first.
+8. **Reports** "<KEY> is migrated" with the routes or summary. The app then posts the ticket in the team review
+   channel, replies in that thread asking the reviewer to review (with the main and staging PR links), and the
+   ticket moves to **Waiting for review**.
+
+### Fix Now →
+**Shows on:** a ticket with new reviewer feedback (it's under **Action needed**), or one that is Dev In Progress
+with nothing waiting on you.
+
+1. **Finds every unanswered feedback message** in the review thread, oldest first; there can be more than one round.
+   It reads an attached report through a helper agent, item by item.
+2. **Moves Jira In Review → Dev In Progress** right away.
+3. **Works on the PR's branch.** Each "fix required" item gets reproduced, fixed, and covered by a test.
+   Items marked "no change" or "approved" are left alone.
+4. **Reviews it again** until it's clean, at most 3 rounds.
+5. **Records the round** in the PR record and commits it as `[<KEY>] Review round <N>: …` (no force-push).
+6. **Updates the staging PR.** It reuses the open one if there is one; otherwise it opens a new one. It never merges it.
+7. **Moves Jira to In Review** and reports "<KEY> is fixed" with the staging PR. The table row becomes
+   Waiting on = You, Next step = "merge + deploy, then reply in the thread".
+
+You then merge and deploy staging and reply in the thread. The watch sees your reply and sets Waiting on back to the reviewer.
+
+### Review →
+**Shows on:** a ticket that is In Review, waiting for the reviewer.
+
+- **Re-reviews the PR as it is now**, report only, in a separate worktree. It runs the same checks a migration's
+  review uses. Full reports are saved under `reviews/<KEY>/` and never committed.
+- **Changes nothing:** no code, git, Jira or Slack.
+- **Clean:** the ticket keeps waiting on the reviewer.
+- **Findings:** the app moves Jira back to Dev In Progress and sets Waiting on = You. The report ends with two options:
+  answer **"fix them now"** in the chat to run a fix round, or **"leave it"**.
+
+### Resume →
+**Shows on:** a ticket whose last run was **stopped** or **failed** (you pressed Stop, the app closed, or there was an error).
+
+- Continues the **same session**, so it keeps everything it already knew and did. It's told what was interrupted,
+  re-runs whatever didn't finish, and ends with the normal final report.
+- A run that ends early without its final report is resumed automatically, up to 2 times. Resume is only for runs that were cut off.
+
+### Stop / Remove from queue
+**Shows on:** a running ticket (**Stop**) or a queued one (**Remove from queue**).
+
+- **Stop** ends the current turn; the session is kept, so **Resume** can continue it. A very long session is
+  compacted on stop, so the next turn costs less.
+- Notes you sent to a stopped run are kept and delivered when you resume it.
+
+### Watch live / History CLI
+**Shows on:** a running ticket (**Watch live**) or one with an earlier run (**History CLI**).
+
+- Opens the session's transcript in the side panel: every step, tool call and result, live while it runs.
+
+### Chat
+**Shows on:** every ticket except an OPEN one that has never had a run.
+
+- **While a run works:** your message is passed to the run as a note after its next step, without stopping it.
+  The chat shows ✓ delivered when it arrives.
+- **Otherwise:** it's a conversation about the ticket. Claude answers or does what you ask, following the same
+  runbook rules, and doesn't post to Slack itself. Ready-made prompts: **Status summary** and **Explain the report**.
+
+### Review thread
+**Opens from:** the card's review line.
+
+- Shows the ticket's team review thread with avatars and attached reports (HTML reports open in the app).
+- The reply box posts **as you**, after a confirm. `:emoji:` names autocomplete, and `@<reviewer>` becomes a real mention.
+  **Open in Slack** jumps to the thread.
+
+### Models ▾
+**In the header.**
+
+- Sets the model and effort for each kind of run: **Migrate**, **Fix Now**, **Review** and **Watch** (the feedback
+  watch's rare Claude question). Helper agents inside a run use a lighter model for routine reading.
+
+### What happens without a button
+- **New tickets** appear within a minute of being assigned to you in Jira.
+- **Reviewer feedback** moves the ticket to **Action needed** within moments of being posted (Slack events,
+  with a 5-minute check as a safety net).
+- **The table** (your Slack List) follows Jira: new rows, status, PR state, deadline, who it's waiting on.
+- **Report tab:** your day's work, counting only what you did, ready to paste.
 
 Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** (your day).
 
@@ -255,8 +351,6 @@ Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** 
   ```
 - `dashboard.py`, `watch.py` and the dashboard files reload on their own.
 - Runtime files (`jobs.json`, `runlog.json`, logs, `addons/`, `run_settings.json`, …) stay out of git.
-- **Open in CLI** opens Terminal with an `njr <KEY>` command. `njr` is a personal shell helper and isn't in this
-  repo; without it, that one button does nothing useful.
 
 ## Rules for changing the code
 
