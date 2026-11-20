@@ -668,15 +668,6 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
             "the foreground this time — and finish it as the runbook says, ending with the final report.")})
         b.post(client, ts, f"▶ Resuming {key} where it stopped (from the dashboard).")
         return True, f"Resuming {key}…", {"ts": ts}
-    if action in ("open_cli", "watch_cli"):
-        # A .command file opened with `open` runs in Terminal without Apple-event permission (the background
-        # bridge is not allowed to script Terminal).
-        cmd = f"njr {key}" + (" -w" if action == "watch_cli" else "")
-        f = b.BASE / f"open-{key}.command"
-        f.write_text(f"#!/bin/zsh -l\ncd {b.REPO}\n{b.HOME}/.local/bin/{cmd}\n", encoding="utf-8")
-        f.chmod(0o700)
-        subprocess.Popen(["open", "-a", "Terminal", str(f)])
-        return True, f"Opened Terminal: {cmd}"
     return False, "Unknown action."
 
 

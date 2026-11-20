@@ -127,10 +127,10 @@ input[type=search] {
   white-space: nowrap;
 }
 label.toggle { display: inline-flex; gap: 5px; align-items: center; color: var(--muted); font-size: 12px; cursor: pointer; }
-/* two independent scroll areas: the ticket list and the Thread / CLI panel; the window itself never scrolls */
+/* two independent scroll areas: the ticket list and the side panel (thread, chat, transcript); the window itself never scrolls */
 main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
 main.with-log { grid-template-columns: minmax(0, 1fr) 7px var(--logw, 42%); }
-/* scrollbars: always shown; a clear one for the ticket list, a thin one for the Thread / CLI panel */
+/* scrollbars: always shown; a clear one for the ticket list, a thin one for the side panel */
 #list::-webkit-scrollbar { width: 11px; }
 #list::-webkit-scrollbar-track { background: transparent; }
 #list::-webkit-scrollbar-thumb {
