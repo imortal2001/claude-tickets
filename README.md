@@ -310,8 +310,8 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
   compacted on stop, so the next turn costs less.
 - Notes you sent to a stopped run are kept and delivered when you resume it.
 
-### Watch live / History CLI
-**Shows on:** a running ticket (**Watch live**) or one with an earlier run (**History CLI**).
+### Watch live / History
+**Shows on:** a running ticket (**Watch live**) or one with an earlier run (**History**).
 
 - Opens the session's transcript in the side panel: every step, tool call and result, live while it runs.
 

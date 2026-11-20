@@ -167,7 +167,7 @@ function buttons(t) {
     const resumable = r.session_id && ["stopped", "failed", "ended_turn"].includes(r.state);
     // (Resume → and Migrate → sit at the bottom-right, in mainAction, with the other main actions.)
     if (r.session_id) {
-      b.push(`<button data-log="${esc(r.session_id)}" data-name="${esc(r.session_name || t.key)}">History CLI</button>`);
+      b.push(`<button data-log="${esc(r.session_id)}" data-name="${esc(r.session_name || t.key)}" title="Open this run's session transcript">History</button>`);
     }
   }
   const rt = t.review_thread;
