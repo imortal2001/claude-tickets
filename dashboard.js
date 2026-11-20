@@ -739,10 +739,30 @@ function parseDecision(text) {
   return {question: q.join("\n").trim(), options: opts};
 }
 
-function threadWorking() {
-  if (!data || !threadRef) return false;
+// The run behind the open chat while it is running or queued, else null.
+function threadRun() {
+  if (!data || !threadRef) return null;
   const ts = threadRef.split("|")[1];
-  return data.tickets.some((t) => t.run.thread_ts === ts && ["running", "queued"].includes(t.run.state));
+  const t = data.tickets.find((x) => x.run.thread_ts === ts && ["running", "queued"].includes(x.run.state));
+  return t ? t.run : null;
+}
+const threadWorking = () => !!threadRun();
+
+// What a running session is waiting on, under "Claude is working…" (owner request 2026-11-20: a long wait for
+// helper agents looked like a stuck chat). A queued note is read only when the current step ends, so it says that too.
+function waitingHtml(run) {
+  const w = (run && run.waiting) || {};
+  const calls = w.calls || [];
+  if (!calls.length && !w.notes) return "";
+  const now = Date.now() / 1000, plural = (n, s) => `${n} ${s}${n === 1 ? "" : "s"}`;
+  const helpers = calls.filter((c) => c.tool === "Agent" || c.tool === "Task");
+  const oldest = Math.min(...calls.map((c) => c.since || now));
+  const what = !calls.length ? ""
+    : helpers.length === calls.length ? `Waiting for ${plural(helpers.length, "helper")}: ${calls.map((c) => c.what).join(" · ")}`
+    : `Running: ${calls.map((c) => c.what).join(" · ")}`;
+  const parts = [what, calls.length ? `for ${mins(oldest)}` : "", w.helpers_at ? `helpers active ${ago(now - w.helpers_at)}` : ""].filter(Boolean);
+  const note = w.notes ? `${plural(w.notes, "note")} queued: Claude reads ${w.notes === 1 ? "it" : "them"} when this step finishes.` : "";
+  return `<span class="wait">${esc(parts.join(" · "))}</span>${note ? `<span class="wait">${esc(note)}</span>` : ""}`;
 }
 
 function chatHtml(msgs) {
@@ -768,7 +788,8 @@ function chatHtml(msgs) {
       report ? '<span class="tag">Report</span>' : ""}<span class="when">${hhmm(m.time)}</span></div>
       ${long(mrkdwn(m.text), m.text)}${files}${choose}</div></div>`;
   })()).join("");
-  const typing = threadWorking() ? '<div class="typing"><img class="c-avatar" src="/avatar.png" alt=""><span class="dots"><i></i><i></i><i></i></span> Claude is working…</div>' : "";
+  const run = threadRun();
+  const typing = run ? `<div class="typing"><img class="c-avatar" src="/avatar.png" alt=""><span class="dots"><i></i><i></i><i></i></span><span class="what">Claude is working…${waitingHtml(run)}</span></div>` : "";
   return {html: (rows || '<div class="empty">No messages yet.</div>') + typing, decision, last};
 }
 
@@ -857,6 +878,11 @@ async function pollThread(first) {
         const pa = first || atEnd ? null : panelAnchor();
         body.innerHTML = j.empty ? emptyChatHtml(j, ts) : c.html; body.dataset.sig = sig;
         if (first || atEnd) body.scrollTop = body.scrollHeight; else panelRestore(pa);
+      } else {
+        // Only the working line's wait details moved on (minutes, helper activity): refresh that line alone, so a
+        // message opened with "Show more" stays open.
+        const line = body.querySelector(".typing .what"), fresh = "Claude is working…" + waitingHtml(threadRun());
+        if (line && line.dataset.v !== fresh) { line.innerHTML = fresh; line.dataset.v = fresh; }
       }
       threadInfo((($("logtitle").textContent || "").split(" ")[0]));
       pendingDecision = c.decision ? {...c.decision, ts: c.last.ts} : null;

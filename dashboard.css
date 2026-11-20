@@ -1299,6 +1299,8 @@ dialog.confirm[open] { animation: cfIn .16s ease-out; }
   text-align: left;
 }
 .typing { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12.5px; padding: 4px 2px; }
+.typing .what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.typing .wait { font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
 #log .pin {
   border: 1px solid var(--line);
   border-left: 3px solid var(--chat);

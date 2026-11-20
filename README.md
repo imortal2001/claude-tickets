@@ -321,6 +321,8 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
 
 - **While a run works:** your message is passed to the run as a note after its next step, without stopping it.
   The chat shows ✓ delivered when it arrives.
+  Under "Claude is working…" the chat shows what the run is waiting on (a command, or helper agents and when they
+  last did something), how long, and whether a note of yours is still queued, so a long wait doesn't look stuck.
 - **Otherwise:** it's a conversation about the ticket. Claude answers or does what you ask, following the same
   runbook rules, and doesn't post to Slack itself. Ready-made prompts: **Status summary** and **Explain the report**.
 

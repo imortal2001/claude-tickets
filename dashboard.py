@@ -147,31 +147,75 @@ def fetch_next_steps() -> dict:
     return out
 
 
-def last_activity(session_id: str) -> str:
+def _tail_records(session_id: str, size: int = 300_000) -> list[dict]:
+    """The last records of a session's transcript (about the last 300 KB), oldest first; [] when there is none."""
     f = transcript_path(session_id)
     if not f:
-        return ""
+        return []
     try:
-        size = f.stat().st_size
+        end = f.stat().st_size
         with f.open("rb") as fh:
-            fh.seek(max(0, size - 300_000))
-            lines = fh.read().decode("utf-8", "ignore").splitlines()[1:]
+            fh.seek(max(0, end - size))
+            lines = fh.read().decode("utf-8", "ignore").splitlines()[1 if end > size else 0:]
     except OSError:
-        return ""
-    for line in reversed(lines):
+        return []
+    out = []
+    for line in lines:
         try:
-            d = json.loads(line)
+            out.append(json.loads(line))
         except ValueError:
             continue
+    return out
+
+
+def _blocks(rec: dict) -> list[dict]:
+    content = (rec.get("message") or {}).get("content")
+    return [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
+
+
+def last_activity(session_id: str, records: list[dict] | None = None) -> str:
+    for d in reversed(records if records is not None else _tail_records(session_id)):
         if d.get("type") != "assistant":
             continue
-        for c in reversed((d.get("message") or {}).get("content") or []):
+        for c in reversed(_blocks(d)):
             if c.get("type") == "text" and c.get("text", "").strip():
                 return c["text"].strip().replace("\n", " ")[:220]
             if c.get("type") == "tool_use":
                 i = c.get("input") or {}
                 return "→ " + str(i.get("description") or c.get("name"))[:200]
     return ""
+
+
+def run_waiting(session_id: str, records: list[dict] | None = None) -> dict:
+    """What a running session is waiting on (owner request 2026-11-20: a long wait looked like a stuck chat).
+    calls: its tool calls with no result yet, oldest first, each {tool, what, since}; helpers_at: when its helper
+    agents last wrote (only while it waits on one); notes: the owner's add-on notes still queued for it. A note
+    reaches the session only after its current call ends, so this is also when the chat's question gets read."""
+    recs = records if records is not None else _tail_records(session_id)
+    done = {c.get("tool_use_id") for r in recs for c in _blocks(r) if c.get("type") == "tool_result"}
+    calls = []
+    for r in recs:
+        if r.get("type") != "assistant":
+            continue
+        for c in _blocks(r):
+            if c.get("type") == "tool_use" and c.get("id") not in done:
+                i = c.get("input") or {}
+                try:
+                    since = datetime.fromisoformat(str(r.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    since = None
+                calls.append({"tool": c.get("name"), "since": since,
+                              "what": str(i.get("description") or i.get("subagent_type") or c.get("name"))[:120]})
+    helpers_at = None
+    f = transcript_path(session_id)
+    if f and any(c["tool"] in ("Agent", "Task") for c in calls):
+        times = [s.stat().st_mtime for s in (f.parent / session_id / "subagents").glob("*.jsonl")]
+        helpers_at = max(times) if times else None
+    queued = getattr(b, "ADDONS", None)
+    notes = 0
+    if queued and (queued / f"{session_id}.jsonl").exists():
+        notes = sum(1 for line in (queued / f"{session_id}.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
+    return {"calls": calls, "helpers_at": helpers_at, "notes": notes} if calls or notes else {}
 
 
 def transcript_path(session_id: str) -> Path | None:
@@ -395,7 +439,10 @@ def state() -> dict:
         fb_open = fb_open or unchecked
         if unchecked and not checking:
             fresh.append(key)
-        activity = last_activity(latest["session_id"]) if (latest and latest.get("session_id") and running) else ""
+        live_sid = latest["session_id"] if (latest and latest.get("session_id") and running) else None
+        records = _tail_records(live_sid) if live_sid else []
+        activity = last_activity(live_sid, records) if live_sid else ""
+        waiting = run_waiting(live_sid, records) if live_sid else {}
         # Finished fix / migration with no reply from the owner in the review thread since -> the reply is still due.
         reply = None
         work = next((r for r in runs if r.get("mode") not in ("chat", "review")), None)   # reviews / chats need no reply
@@ -432,6 +479,7 @@ def state() -> dict:
                 "thread_ts": latest["thread_ts"] if latest else None,
                 "when": (latest or {}).get("finished_at") or (latest or {}).get("last_run"),
                 "activity": activity,
+                "waiting": waiting,
                 "model": (cur.get("model") if running else None) or (latest or {}).get("model"),
                 "effort": (cur.get("effort") if running else None) or (latest or {}).get("effort"),
             },
