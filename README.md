@@ -1,13 +1,15 @@
 # Claude Tickets — Slack bridge and dashboard
 
-Runs Claude Code on your Jira tickets from Slack, and shows them on a local dashboard.
+Picks up your open Jira tickets and runs Claude Code on them from a local dashboard, then tracks the review
+feedback until each ticket is done.
 
-- **Slack bridge** (`bridge.py`): type `/migrate NJ-12345` or `/fix NJ-12345` in Slack, and a headless
-  `claude -p` session works the ticket on your Mac. One ticket runs at a time; the rest queue.
-  It uses Socket Mode, so it needs no public URL.
-- **Dashboard** (`dashboard.py` + `dashboard.html` / `.css` / `.js`): http://127.0.0.1:8790, served by the
-  bridge. It shows your tickets by status, runs, review threads, a chat with Claude per ticket, a table
-  view of your Slack List and a daily report. It only accepts connections from your own Mac.
+- **Dashboard** (`dashboard.py` + `dashboard.html` / `.css` / `.js`): http://127.0.0.1:8790. Its buttons
+  (Migrate, Fix now, Review, Stop, Resume) start and steer the runs. It also shows your tickets by status, the
+  review threads, a chat with Claude per ticket, a table view of your Slack List and a daily report. It only
+  accepts connections from your own Mac.
+- **Bridge** (`bridge.py`): the background service behind the dashboard. It reads your tickets from Jira, runs a
+  headless `claude -p` session per ticket on your Mac (one at a time; the rest queue) and listens to the review
+  channel through Slack Socket Mode, so it needs no public URL.
 - **Feedback watch** (`watch.py`): plain Python that checks the review threads for new reviewer feedback
   and keeps the Slack List in sync with Jira. It only asks Claude when a message is unclear.
 - **Add-on hook** (`addon_hook.py`): passes notes you type in the chat to a run while it works.
@@ -55,7 +57,7 @@ python3 -m venv ~/.venvs/slack-bridge
 At https://api.slack.com/apps → **Create New App** → From scratch.
 
 1. **Socket Mode**: turn it on. Create an **app-level token** with `connections:write` (`xapp-…`).
-2. **Slash Commands**: add `/migrate`, `/fix` and `/tickets`.
+2. **Slash Commands** (optional, only for the Slack fallback): add `/migrate`, `/fix` and `/tickets`.
 3. **Interactivity**: turn it on (the bridge has buttons). No request URL is needed with Socket Mode.
 4. **OAuth & Permissions → Bot Token Scopes**: `chat:write`, `commands`, `channels:history`,
    `groups:history`, `users:read`, `files:read`, `lists:read`, `lists:write`.
@@ -164,22 +166,17 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.claude-slack-bridg
 
 - `tail -f ~/.claude/jira-automation/slack-bridge/bridge.log` shows the bridge connecting.
 - Open http://127.0.0.1:8790. Your tickets should appear within a minute.
-- In Slack, `/migrate status` answers with what is running and queued.
+- The dashboard header shows the bridge, the Jira check and the feedback watch as healthy.
 
 ---
 
 ## Using it
 
-| In Slack | Does |
-|---|---|
-| `/migrate NJ-12345` | starts (or queues) a run on the ticket |
-| `/fix NJ-12345 [link]` | fixes the reviewer's latest feedback (the attached report, or the link you give) |
-| `/migrate status` | what is running and queued |
-| `/migrate stop` | stops the running session's current turn |
-| `/tickets` | a status summary of your open tickets |
+Everything happens in the dashboard: **Migrate**, **Fix now** and **Review** start a run, **Stop** and **Resume**
+control it, each ticket has a chat with Claude, and **Models** picks the model and effort for each kind of run.
 
-The dashboard has the same buttons (Migrate, Fix now, Review, Stop, Resume), plus a per-ticket chat, the review
-threads and a **Models** menu to pick the model and effort for each kind of run.
+The old Slack slash commands (`/migrate`, `/fix`, `/tickets`) still work as a fallback, but the dashboard is the
+way to use it.
 
 ## Day to day
 
