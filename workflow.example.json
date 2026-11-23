@@ -67,5 +67,15 @@
       "skip": "Skip"
     }
   },
-  "_help": "Your team's workflow. statuses: your Jira status names for each role the app knows. reports: the words your runbook tells runs to start their final report with. list_options: your Slack List's option keys (its Status / Waiting on columns) and the labels the app shows. hide.marker: tickets whose summary contains it get a 'Hide …' toggle; empty = none."
+  "_help": "Your team's workflow. statuses: your Jira status names for each role the app knows. reports: the words your runbook tells runs to start their final report with. list_options: your Slack List's option keys (its Status / Waiting on columns) and the labels the app shows. hide.marker: tickets whose summary contains it get a 'Hide …' toggle; empty = none. messages: what the app posts for you in the review thread; {reviewer_mention} is the reviewer's Slack mention with its honorific, {reviewer_at} the '@Name' a draft starts with, {greet} one of greetings (morning / afternoon / evening); a line whose value is missing (e.g. no staging PR) is left out.",
+  "messages": {
+    "ready_reply": "Hi {reviewer_mention}, the ticket is ready for review.\nmain: {main}\nstaging: {stg}",
+    "reply_ready": "{greet}, {reviewer_at}, this ticket is ready for review.\nmain: {main}\nstaging: {stg}",
+    "reply_fixed": "{greet}, {reviewer_at}, I fixed the feedback, please check it again.\nmain: {main}\nstaging: {stg}",
+    "greetings": [
+      "Good morning",
+      "Good afternoon",
+      "Good evening"
+    ]
+  }
 }

@@ -30,6 +30,8 @@ the reviewer leaves feedback, lets you start the fix with one click, and keeps y
 | Workspace settings | `workspace.py`, `workspace.json` | your Slack, Jira and GitHub IDs (`workspace.json` is yours and not in git) |
 | Workflow settings | `workflow.py`, `workflow.json` | your Jira status names, report words, Slack List options and hide marker (`workflow.json` is yours and not in git; `workflow.example.json` is the template) |
 | Prompts | `prompts/`, `prompts.local/` | what each run is told: generic defaults in `prompts/`, your own wording in `prompts.local/` (not in git) |
+| Window app | `app/` | **Claude Tickets.app**, a native macOS window around the dashboard (`app/build.sh` builds it into `~/Applications`) |
+| Installer | `install.sh` | sets everything up on a Mac and lists what is left for you to fill in |
 
 ## The tools it uses
 
@@ -64,7 +66,42 @@ chmod 600 ~/.claude/secrets/*
 
 ---
 
+## Quick start
+
+1. Clone into the folder the app expects:
+   ```bash
+   git clone https://github.com/<owner>/claude-tickets.git ~/.claude/jira-automation/slack-bridge
+   ```
+2. Run the installer. It checks the tools, makes the Python environment, copies the example settings, makes the tokens
+   folder, writes the launchd job and builds **Claude Tickets.app** into `~/Applications`:
+   ```bash
+   ~/.claude/jira-automation/slack-bridge/install.sh
+   ```
+3. Do what it lists under **Left for you**. Those are the steps of "Set it up for your team" below and of the Setup section.
+4. Run `install.sh` again. Once everything is in place it starts the bridge, and Claude Tickets opens your board.
+
+`install.sh` is safe to run any time: it never overwrites your settings, tokens or launchd job.
+
+## Set it up for your team
+
+The app knows no team's process. Everything about how **your** team works lives in six places. The app never needs
+to know your skills or tools: only your runbook names them.
+
+| # | What | Where | What you put in it |
+|---|---|---|---|
+| 1 | **Workspace IDs** | `workspace.json` (from `workspace.example.json`) | your Slack channels, Slack List and its columns, your Slack user, the bot, the reviewer (name, Slack ID, optional honorific such as `-san`), your Jira site and fields, your GitHub repo and local checkout. Setup step 6 says where to find each |
+| 2 | **Workflow** | `workflow.json` (from `workflow.example.json`) | your Jira status name for each role (`open`, `dev`, `review`, `blocked`, `released`), your JQL, the words your runs' reports start with, your Slack List's options, an optional hide marker, and the **messages** the app posts for you in the review thread (setup step 7) |
+| 3 | **Prompts** (optional) | `prompts.local/<name>.md` | your own wording for any prompt in `prompts/`. Copy one there and edit it; a local file always wins |
+| 4 | **Runbook** | `~/.claude/jira-automation/RUNBOOK.md` | your process step by step: how a run investigates, builds and reviews a ticket, **which skills and checks it runs**, the PRs, the Jira moves and the report format (with the report words from #2) |
+| 5 | **Feedback watch prompt** | `~/.claude/jira-automation/feedback-watch-prompt.md` | how Claude should judge a reviewer message the watch can't classify by itself |
+| 6 | **Slack, tokens and launchd** | your Slack app and List, `~/.claude/secrets/`, the launchd job | Setup steps 4, 5 and 8 (`install.sh` makes the folder and writes the job) |
+
+Your settings, prompts, runbook and tokens stay on your Mac: git ignores them, so pulling a new version of the app
+never touches them. Back them up yourself; a fresh clone needs them again.
+
 ## Setup
+
+The installer does steps 1 and 8 for you. The rest explain each tool and where every value comes from.
 
 ### 1. The code and Python
 
@@ -174,7 +211,8 @@ Fill it in. Git ignores it, so your IDs never get committed.
 | `slack.*_channel_name` (optional) | the three channels' names, shown in messages (`my-reports` → "#my-reports"); without them the app says "the report channel" and so on |
 | `slack.ticket_list` | your Slack List: the `F…` id in its link |
 | `slack.ticket_list_columns` | each column's `Col…` id (read them with `slackLists.items.list`). Keep `thread` as is |
-| `reviewer.name` | the reviewer's name as you write it in messages (`Hello, @<name> -san`) |
+| `reviewer.name` | the reviewer's name as you write it in messages (`@<name>` in a draft, "waiting for <name>") |
+| `reviewer.honorific` (optional) | written after the name, e.g. `-san` → "@Tanaka -san", "waiting for Tanaka-san". Leave it empty for just the name |
 | `reviewer.slack_user` | the reviewer's member ID |
 | `reviewer.list_option` | the List's **Waiting on** option for the reviewer |
 | `jira.site` | `https://<your-site>.atlassian.net` |
@@ -196,6 +234,10 @@ The app knows no team's process by itself. You describe yours in four places:
      and its `Status:` / `Staging PR:` lines. The app reads the reports by these words, so your runbook must use them.
    - `list_options`: your Slack List's option keys for its Status and Waiting on columns, and the labels shown.
    - `hide`: a summary marker for tickets the board can hide (the "Hide …" toggle); empty = no toggle.
+   - `messages`: what the app posts **as you** in the review thread: `ready_reply` after a migration, and the
+     `reply_ready` / `reply_fixed` drafts in the reply box, plus the three `greetings` (morning / afternoon / evening).
+     Placeholders: `{reviewer_mention}` (the reviewer's Slack mention with the honorific), `{reviewer_at}` ("@Name"
+     with the honorific), `{greet}`, `{main}`, `{stg}`. A line whose value is missing (no staging PR) is left out.
 2. **`prompts/`**: what each run is told (migrate, fix, review, chat, …). The defaults just say "follow your runbook".
    To change one, copy it into **`prompts.local/`** with the same name and edit it there; a local file always wins.
    Prompts can use `@@MARKERS@@` for your settings: `@@DEV@@`, `@@REVIEW@@`, `@@JQL@@`, `@@MIGRATED@@`, `@@REVIEWER@@`, …
@@ -207,7 +249,8 @@ The app knows no team's process by itself. You describe yours in four places:
 
 ### 8. Start it (macOS launchd)
 
-Create `~/Library/LaunchAgents/local.claude-slack-bridge.plist`, replacing `YOU` with your macOS user name:
+`install.sh` writes this job for you and starts it once your settings and tokens are in place. By hand: create
+`~/Library/LaunchAgents/local.claude-slack-bridge.plist`, replacing `YOU` with your macOS user name:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -377,6 +420,7 @@ from the List's "Sent for review <time>" when the thread can't be read.
   ```bash
   launchctl kickstart -k gui/$(id -u)/local.claude-slack-bridge
   ```
+- After changing `app/main.swift`, rebuild the window app with `app/build.sh`.
 - `dashboard.py`, `watch.py` and the dashboard files reload on their own. `workspace.json`, `workflow.json` and the
   prompts are read once at start:
   restart the bridge after editing it. A missing key stops the bridge with a message naming it (`launchd.err.log`).

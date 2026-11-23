@@ -300,7 +300,7 @@ def kind_of(key: str, info: dict) -> str:
 # the ball is with the reviewer: Waiting on = the reviewer, Next step = "Sent for review <time> — waiting for <reviewer>-san".
 
 # The Next step a move to In Review writes before the owner has replied in the thread.
-IN_REVIEW_NEXT = f"{WF.REVIEW} — waiting for {W.REVIEWER}-san"
+IN_REVIEW_NEXT = f"{WF.REVIEW} — waiting for {W.REVIEWER_CALLED}"
 
 
 def stale_next(nxt: str) -> bool:
@@ -326,7 +326,7 @@ def sent_for_review(key: str, row: dict, colids: dict, jira_status: str, fresh: 
     if len(msgs) < 2 or not msgs[-1].get("mine"):
         return []
     return [_cell(colids, "waiting", row["id"], select=W.REVIEWER_OPTION),
-            _cell(colids, "next", row["id"], text=f"Sent for review {msgs[-1].get('time', '')} — waiting for {W.REVIEWER}-san")]
+            _cell(colids, "next", row["id"], text=f"Sent for review {msgs[-1].get('time', '')} — waiting for {W.REVIEWER_CALLED}")]
 
 
 def reply_sent(thread_ts: str) -> str:

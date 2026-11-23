@@ -83,6 +83,26 @@ def list_status_option(jira_name: str, default: str | None = None,
     return LIST_STATUS[role] if role in roles else default
 
 
+# ---- what the app writes for the owner in the review thread ----
+MESSAGES = _get("messages")
+
+
+def message(name: str, **values) -> str:
+    """A message from workflow.json's messages, filled in. A line with a placeholder whose value is empty (no staging
+    PR, say) is left out."""
+    keep = []
+    for line in MESSAGES[name].split("\n"):
+        names = re.findall(r"{(\w+)}", line)
+        if all(values.get(n) for n in names):
+            keep.append(line.format(**values))
+    return "\n".join(keep)
+
+
+def greeting(hour: int) -> str:
+    morning, afternoon, evening = MESSAGES["greetings"]
+    return morning if hour < 12 else afternoon if hour < 18 else evening
+
+
 # ---- prompts ----
 def fill(text: str) -> str:
     """Put the workflow's values into a prompt's @@NAME@@ markers: @@JQL@@, the statuses (@@OPEN@@, @@DEV@@, @@REVIEW@@,

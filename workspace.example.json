@@ -25,6 +25,7 @@
   },
   "reviewer": {
     "name": "Reviewer's name as written in messages",
+    "honorific": "optional, e.g. -san (written after the name); leave empty for none",
     "slack_user": "U… reviewer's Slack user id",
     "list_option": "the List's Waiting on option id for the reviewer"
   },

@@ -53,6 +53,14 @@ DAILY_NAME = _channel_name("daily_report_channel_name", "the daily report channe
 REVIEWER = _get("reviewer.name")                     # how the reviewer is called in messages ("Hello, @<name> -san")
 REVIEWER_USER = _get("reviewer.slack_user")
 REVIEWER_OPTION = _get("reviewer.list_option")       # the List's "Waiting on" option for the reviewer
+HONORIFIC = str((_c.get("reviewer") or {}).get("honorific") or "")   # optional, e.g. "-san"; "" = just the name
+REVIEWER_CALLED = f"{REVIEWER}{HONORIFIC}"            # in plain text: "Tanaka-san"
+
+
+def reviewer_mention(at: str) -> str:
+    """The reviewer addressed in a message: "<@U…>" or "@Name", with the honorific after a space ("<@U…> -san")."""
+    return f"{at} {HONORIFIC}".rstrip()
+
 
 JIRA_SITE = _get("jira.site").rstrip("/")
 JIRA_CLOUD_ID = _get("jira.cloud_id")
@@ -64,7 +72,7 @@ REPO_NAME = REPO.name
 
 # What the dashboard's script needs; nothing else leaves the process.
 PUBLIC = {"jira": JIRA_SITE, "report": REPORT_CHANNEL, "review": REVIEW_CHANNEL, "reviewer": REVIEWER,
-          "reviewerOption": REVIEWER_OPTION, "reportName": REPORT_NAME, "reviewName": REVIEW_NAME, "dailyName": DAILY_NAME}
+          "reviewerOption": REVIEWER_OPTION, "reviewerCalled": REVIEWER_CALLED, "reportName": REPORT_NAME, "reviewName": REVIEW_NAME, "dailyName": DAILY_NAME}
 
 
 def fill(text: str) -> str:

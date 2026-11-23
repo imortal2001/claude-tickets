@@ -363,7 +363,7 @@ function statCards() {
   return `<div class="stats">${
     card(`Claude runs (${st.days || 7} days)`, st.runs ?? "–", "", st.runs ? `${pct}% finished · ${esc(parts)}` : "none yet", st.runs && pct === 100 ? "ok" : "")}${
     card("Run model", esc(models[rs.model] || rs.model || "–"), "accent", `${esc(rs.effort || "")} effort · review ${esc((models[(rs.review || {}).model] || "").split(" ")[0])} ${esc((rs.review || {}).effort || "")}`)}${
-    card("Waiting on the reviewer", waits.length ? `${avg.toFixed(1)}h` : "–", "info", waits.length ? `average of ${waits.length} · longest ${Math.round(longest)}h · ${esc(CFG.reviewer || "")}-san` : "nothing waiting")}${
+    card("Waiting on the reviewer", waits.length ? `${avg.toFixed(1)}h` : "–", "info", waits.length ? `average of ${waits.length} · longest ${Math.round(longest)}h · ${esc(CFG.reviewerCalled || CFG.reviewer || "")}` : "nothing waiting")}${
     card("PRs with conflicts", `${bad.length} PR${bad.length === 1 ? "" : "s"}`, bad.length ? "bad" : "ok", bad.length ? bad.map((t) => "#" + t.pr.main.number).join(", ") : "every PR merges cleanly")}</div>`;
 }
 async function copyReport() {

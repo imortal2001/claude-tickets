@@ -1155,9 +1155,8 @@ def ready_reply_text(key: str, report: str = "") -> str | None:
             stg = m.group(0)
     if not main:
         return None
-    # "Hello, @<reviewer> -san" — mentions the reviewer (owner request 2026-11-17).
-    return "\n".join([f"Hello, <@{LEAD}> -san", "The ticket is done migrating, and it's ready for review :man-bowing:",
-                      f"main: {main}"] + ([f"stg: {stg}"] if stg else []))
+    # Mentions the reviewer (owner request 2026-11-17); the wording is workflow.json's messages.ready_reply.
+    return WF.message("ready_reply", reviewer_mention=W.reviewer_mention(f"<@{LEAD}>"), main=main, stg=stg or "")
 
 
 def post_ready_reply(client, key: str, review_ts: str, report: str = "", run_thread_ts: str | None = None) -> str | None:
@@ -1262,18 +1261,13 @@ def reply_template(key: str) -> dict:
         prs = []
     main = sorted([p for p in prs if p["baseRefName"] == "main" and p["state"] != "CLOSED"], key=lambda p: p["number"])
     stg = sorted([p for p in prs if p["baseRefName"] != "main" and p["state"] != "CLOSED"], key=lambda p: p["number"])
-    hour = datetime.now().hour
-    greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
     with b._state_lock:
         recs = [v for v in b.load_state()["threads"].values() if v.get("key") == key]
     fixed = any(v.get("mode") == "fix" for v in recs)
-    body = "I fixed the feedback, please check it again :man-bowing:" if fixed else "This ticket is ready for review :man-bowing:"
-    lines = [f"{greet}, @{W.REVIEWER} -san", body]
-    if main:
-        lines.append(f"main: {main[-1]['url']}")
-    if stg:
-        lines.append(f"stg: {stg[-1]['url']}")
-    return {"text": "\n".join(lines)}
+    # workflow.json's messages.reply_fixed / reply_ready; "@<reviewer>" becomes a real mention when it is posted.
+    return {"text": WF.message("reply_fixed" if fixed else "reply_ready", greet=WF.greeting(datetime.now().hour),
+                               reviewer_at=W.reviewer_mention(f"@{W.REVIEWER}"),
+                               main=main[-1]["url"] if main else "", stg=stg[-1]["url"] if stg else "")}
 
 
 # ---------- the Claude Report bot's Slack profile picture (chat avatar) ----------
