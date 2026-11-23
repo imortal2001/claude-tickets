@@ -38,7 +38,7 @@ the reviewer leaves feedback, lets you start the fix with one click, and keeps y
 | Tool | What the app uses it for | What you set up |
 |---|---|---|
 | **macOS** | runs the bridge in the background (launchd) | a launchd job |
-| **Python** | runs the bridge | Python 3.11+ with `slack_bolt` |
+| **Python** | runs the bridge | Python 3.9+ with `slack_bolt` (the Mac's built-in `python3` works) |
 | **Claude Code** | does the work on each ticket | the CLI, signed in, with the Atlassian and Slack connectors |
 | **Jira** | the source of your tickets; moves them between statuses | an API token |
 | **GitHub** | shows each ticket's PRs and whether they can merge | the `gh` CLI, signed in |
@@ -78,7 +78,8 @@ chmod 600 ~/.claude/secrets/*
    ~/.claude/jira-automation/slack-bridge/install.sh
    ```
 3. Do what it lists under **Left for you**. Those are the steps of "Set it up for your team" below and of the Setup section.
-4. Run `install.sh` again. Once everything is in place it starts the bridge, and Claude Tickets opens your board.
+4. Run `install.sh` again. Once everything is in place it starts the bridge. Then open **Claude Tickets** from
+   `~/Applications` (or http://127.0.0.1:8790 in a browser).
 
 `install.sh` is safe to run any time: it never overwrites your settings, tokens or launchd job.
 
@@ -164,7 +165,8 @@ The bridge reads your open tickets (`assignee = currentUser()`), and the app mov
 2. Save it as `~/.claude/secrets/jira-token`, and your Atlassian email as `~/.claude/secrets/jira-email`.
 3. Find your site's **cloud id**: open `https://<your-site>.atlassian.net/_edge/tenant_info` and copy `cloudId`.
 4. Find the custom field that holds the main PR link (`customfield_…`, e.g. in an issue's JSON at
-   `https://<your-site>.atlassian.net/rest/api/3/issue/<KEY>`). Jira may refuse In Review while it is empty.
+   `https://<your-site>.atlassian.net/rest/api/3/issue/<KEY>`). The watch reads it to fill the List's PR cell; if your
+   Jira needs it before a move to review, say so in your runbook so the run fills it first.
 
 ### 5. Slack
 
@@ -389,7 +391,7 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
   you. An instruction gets done, following the same runbook rules. It doesn't post to Slack itself. Ready-made prompts: **Status summary** and **Explain the report**.
 
 ### Review thread
-**Opens from:** the card's review line.
+**Opens from:** the card's review line, or a click anywhere on the card outside its buttons and links.
 
 - Shows the ticket's team review thread with avatars and attached reports (HTML reports open in the app).
 - The reply box posts **as you**, after a confirm. `:emoji:` names autocomplete, and `@<reviewer>` becomes a real mention.
@@ -399,14 +401,16 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
 **In the header.**
 
 - Sets the model and effort for each kind of run: **Migrate**, **Fix Now**, **Review** and **Watch** (the feedback
-  watch's rare Claude question). Helper agents inside a run use a lighter model for routine reading.
+  watch's rare Claude question). The run's helper agents use the same model unless your prompts say otherwise (to
+  save tokens, a prompt can tell routine helpers to use a lighter one).
 
 ### What happens without a button
 - **New tickets** appear within a minute of being assigned to you in Jira.
 - **Reviewer feedback** moves the ticket to **Action needed** within moments of being posted (Slack events,
   with a 5-minute check as a safety net).
 - **The table** (your Slack List) follows Jira: new rows, status, PR state, deadline, who it's waiting on.
-- **Report tab:** your day's work, counting only what you did, ready to paste.
+- **Report tab:** your day's work, counting only what you did, ready to paste. At 17:40 on weekdays the app also
+  posts it to your report channel, with the lines to paste into the daily report channel's thread.
 
 Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** (your day).
 
@@ -422,8 +426,10 @@ from the List's "Sent for review <time>" when the thread can't be read.
   ```
 - After changing `app/main.swift`, rebuild the window app with `app/build.sh`.
 - `dashboard.py`, `watch.py` and the dashboard files reload on their own. `workspace.json`, `workflow.json` and the
-  prompts are read once at start:
-  restart the bridge after editing it. A missing key stops the bridge with a message naming it (`launchd.err.log`).
+  prompts are read when the bridge starts: restart it after editing them. A missing key stops the bridge with a
+  message naming it (in `launchd.err.log`).
+- **Update the app:** `git pull` in this folder, then restart the bridge (when nothing is running). Your settings,
+  prompts and tokens are untouched; run `install.sh` again if the update says so.
 - Runtime files (`jobs.json`, `runlog.json`, logs, `addons/`, `run_settings.json`, …) stay out of git.
 
 ## Rules for changing the code
