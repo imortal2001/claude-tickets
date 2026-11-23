@@ -1,16 +1,10 @@
-"""Slack `/migrate NJ-XXXXX` -> a Claude Code session on this Mac.
+"""The Claude Tickets bridge: the background service behind the dashboard.
 
-Socket Mode (outbound websocket, no public URL). Only the owner may command it.
-One ticket runs at a time; others queue. The session keeps the investigation and all
-detail; the Slack thread only gets the ```slack block each turn ends with
-(see RUNBOOK.md, "Slack /migrate command").
-
-Commands:  /migrate NJ-12345   start (or queue) a ticket
-           /fix NJ-12345 [link] fix the latest review feedback (the attached <KEY>.html report,
-                                or the report/message link given) on an In Review ticket
-           /migrate status     what is running and queued
-           /migrate stop       stop the running session's current turn
-Thread replies from the owner are passed to that ticket's session (claude --resume).
+It checks Jira for the owner's tickets, runs one Claude Code session at a time for the dashboard's buttons (Migrate,
+Fix Now, Review, Resume, Chat; the rest queue), listens to Slack over Socket Mode (outbound, no public URL) for the
+review threads, and serves the dashboard (dashboard.py). The feedback watch and the Slack List sync are in watch.py.
+Each session keeps all its detail; the app shows its chat and the final report. A reply in a run's Slack thread, when
+Slack run reports are on, is passed to that session (claude --resume).
 """
 
 from __future__ import annotations
@@ -152,21 +146,12 @@ CHAT_PROMPT = workflow.prompt("chat")
 FIX_PROMPT = workflow.prompt("fix")
 
 
-READONLY = workflow.prompt("readonly")
-
-STATUS_ALL_PROMPT = READONLY + workflow.prompt("status_all")
-
-
-STATUS_ONE_FRESH_PROMPT = READONLY + workflow.prompt("status_one_fresh")
-
-STATUS_ONE_RESUME_PROMPT = READONLY + workflow.prompt("status_one_resume")
-
 
 # ---------- worker ----------
 
 jobs: "queue.Queue[dict]" = queue.Queue()
 current: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
-waiting: list[str] = []  # keys queued, for /migrate status
+waiting: list[str] = []  # labels of the queued jobs (the dashboard shows them)
 cancelled: set[str] = set()  # queued labels removed from the dashboard; the worker skips them
 
 
@@ -646,16 +631,6 @@ def live_for(key: str) -> list[dict]:
             if pat.search(s["title"]) or s["branch"] == key or pat.search(s["cwd"])]
 
 
-def worktree_for(key: str) -> str | None:
-    out = subprocess.run(["git", "-C", str(REPO), "worktree", "list", "--porcelain"], capture_output=True, text=True).stdout
-    path = None
-    for line in out.splitlines():
-        if line.startswith("worktree "):
-            path = line[9:]
-        elif line == f"branch refs/heads/{key}":
-            return path
-    return None
-
 
 def busy_elsewhere(key: str) -> str | None:
     live = [x for x in live_for(key) if x.get("state") == "working"]
@@ -665,171 +640,19 @@ def busy_elsewhere(key: str) -> str | None:
     return f"{key} is being worked on in another Claude session — “{s['title']}”, active {s['age_min']:.0f} min ago. Not starting a second one; stop that session first."
 
 
-def run_readonly(prompt: str, session_id: str | None = None) -> str:
-    """A short read-only Claude call (never the worker's job slot). Returns the slack block or a note."""
-    cmd = [str(CLAUDE), "-p", prompt, *model_args(), "--permission-mode", "auto", "--output-format", "json"]
-    if session_id:
-        cmd += ["--resume", session_id]
-    env = dict(os.environ)
-    env["PATH"] = f"{HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
-    try:
-        out = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True, timeout=600).stdout
-        data = json.loads(out.strip().splitlines()[-1])
-        if data.get("is_error"):
-            return f"⚠️ Claude could not run the status check: {str(data.get('result'))[:300]}"
-        return slack_text_from(data.get("result", "")) or "(the status check returned no summary)"
-    except Exception as exc:
-        log.exception("status check failed")
-        return f"⚠️ Status check failed ({type(exc).__name__}). Check `{LOG}`."
-
-
-def records_for(key: str) -> list[dict]:
-    with _state_lock:
-        threads = load_state()["threads"]
-    rows = [dict(v, thread_ts=k) for k, v in threads.items() if v.get("key") == key]
-    return sorted(rows, key=lambda r: float(str(r["thread_ts"]).replace("local-", "") or 0))
-
-
-def local_facts(key: str) -> str:
-    recs = records_for(key)
-    if current.get("key") == key:
-        claude = f"running now ({int(time.time() - (current.get('since') or time.time()))}s)"
-    elif any(k.startswith(key) for k in waiting):
-        claude = "queued"
-    elif recs:
-        last = recs[-1]
-        when = last.get("stopped_at") or last.get("finished_at") or last.get("last_run") or ""
-        claude = f"{last.get('status', 'unknown')} {when}".strip() + f" · session `{last.get('session_name', key)}`"
-    else:
-        claude = "no session yet"
-    git = subprocess.run(["git", "-C", str(REPO), "log", "-1", "--format=%h %s (%cr)", key], capture_output=True, text=True)
-    branch = git.stdout.strip() or "no local branch"
-    ahead = subprocess.run(["git", "-C", str(REPO), "rev-list", "--count", f"origin/{key}..{key}"], capture_output=True, text=True).stdout.strip()
-    if ahead and ahead != "0":
-        branch += f" · {ahead} commit(s) not pushed"
-    live = live_for(key)
-    if live:
-        s0 = live[0]
-        if s0.get("state") == "working":
-            claude = f"working now in another session — “{s0['title']}” (last activity {s0['age_min']:.0f} min ago)"
-        else:
-            claude = f"finished its turn {s0['age_min']:.0f} min ago in another session — “{s0['title']}”"
-        claude += (f"\n> {s0['last'][:200]}" if s0["last"] else "")
-    wt = worktree_for(key)
-    if wt:
-        branch += f" · checked out in `{Path(wt).name}`"
-    return f"*{key}*\nClaude: {claude}\nBranch: {branch}\n_Asking Jira and the session for details… (about a minute)_"
-
-
-def status_one(client, key: str) -> None:
-    log.info("/tickets %s started", key)
-    recs = [r for r in records_for(key) if r.get("session_id")]
-    running = current.get("key") == key
-    live = live_for(key)
-    if live:
-        wt = worktree_for(key) or str(REPO)
-        ctx = json.dumps(live[:2], ensure_ascii=False)
-        text = run_readonly(STATUS_ONE_FRESH_PROMPT.format(key=key, repo=REPO, record=f"(no bridge session) — but this ticket is LIVE in another Claude session right now; do not touch it. Its record: {ctx}. The ticket branch is checked out in {wt}: read git state there with `git -C`."))
-        label = "🛠 Working now in another Claude session (not interrupted)." if live[0].get("state") == "working" else f"💤 Another Claude session (“{live[0]['title']}”) finished its turn {live[0]['age_min']:.0f} min ago."
-        client.chat_postEphemeral(channel=CHANNEL, user=OWNER, text=label + "\n" + text)
-        return
-    if recs and not running:
-        text = run_readonly(STATUS_ONE_RESUME_PROMPT.format(key=key), recs[-1]["session_id"])
-    else:
-        record = json.dumps(records_for(key), ensure_ascii=False)[:2000] or "none"
-        text = run_readonly(STATUS_ONE_FRESH_PROMPT.format(key=key, repo=REPO, record=record))
-        if running:
-            text = "🛠 The session is running right now (not interrupted).\n" + text
-    client.chat_postEphemeral(channel=CHANNEL, user=OWNER, text=text)
-
-
-TICKETS_BLOCK_RE = re.compile(r"```tickets\s*\n(.*?)```", re.S)
-STATUS_ORDER = workflow.BOARD_ORDER
-
-
-def tickets_from(result: str) -> list[dict] | None:
-    blocks = TICKETS_BLOCK_RE.findall(result or "")
-    if not blocks:
-        return None
-    try:
-        rows = json.loads(blocks[-1])
-        return [r for r in rows if isinstance(r, dict) and r.get("key")]
-    except json.JSONDecodeError:
-        return None
-
-
-def run_status_all_raw(prompt: str) -> str:
-    cmd = [str(CLAUDE), "-p", prompt, *model_args(), "--permission-mode", "auto", "--output-format", "json"]
-    env = dict(os.environ)
-    env["PATH"] = f"{HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
-    out = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True, timeout=600).stdout
-    data = json.loads(out.strip().splitlines()[-1])
-    if data.get("is_error"):
-        raise RuntimeError(str(data.get("result"))[:300])
-    return data.get("result", "")
 
 
 def jira_link(key: str) -> str:
     return f"<{JIRA_SITE}/browse/{key}|*{key}*>"
 
 
-def pr_links(pr: str) -> str:
-    """'#2141 (mergeable)' -> '<github pull 2141|#2141> (mergeable)'; text without a number stays as it is."""
-    return re.sub(r"#(\d{3,6})", lambda m: f"<https://github.com/{workspace.GH_REPO}/pull/{m.group(1)}|#{m.group(1)}>", pr or "no PR")
-
-
-def post_ticket_status(client, rows: list[dict]) -> None:
-    """One channel message (name + Jira status per ticket); each ticket's Progress as a reply in its thread."""
-    groups: dict[str, list[dict]] = {}
-    for r in rows:
-        groups.setdefault(r.get("status") or "Other", []).append(r)
-    order = [g for g in STATUS_ORDER if g in groups] + [g for g in groups if g not in STATUS_ORDER]
-    lines = [f"*My tickets* · {time.strftime('%H:%M')} · {len(rows)} tickets — progress in the thread 🧵"]
-    for g in order:
-        lines.append(f"\n*{g}*")
-        for r in groups[g]:
-            lines.append(f"{jira_link(r['key'])} — {r.get('name', '')}")
-    parent = client.chat_postMessage(channel=CHANNEL, text="\n".join(lines), unfurl_links=False)
-    ts = parent["ts"]
-    for g in order:
-        for r in groups[g]:
-            client.chat_postMessage(channel=CHANNEL, thread_ts=ts, unfurl_links=False,
-                                    text=f"{jira_link(r['key'])} — {r.get('name', '')}\nPR: {pr_links(r.get('pr', 'no PR'))}\nProgress: {pr_links(r.get('progress', '—'))}")
-
-
-def status_all(client) -> None:
-    log.info("/tickets (all) started")
-    with _state_lock:
-        jobs_json = json.dumps(load_state()["threads"], ensure_ascii=False)[:6000]
-    live = [{k: v for k, v in x.items() if k != "last"} for x in scan_live_sessions()]
-    running = (current.get("key") or "nothing") + f". Other live Claude sessions (desktop / terminal; map them to tickets by title, branch or folder and use them in PROGRESS as \"Claude working now — <title>\" when state is working, or \"Claude session idle (finished <age_min> min ago) — <title>\" when state is idle): {json.dumps(live, ensure_ascii=False)[:3000]}"
-    t0 = time.time()
-    try:
-        result = run_status_all_raw(STATUS_ALL_PROMPT.format(repo=REPO, jobs=jobs_json, running=running,
-                                                             queued=", ".join(waiting) or "nothing"))
-        rows = tickets_from(result)
-        if rows:
-            post_ticket_status(client, rows)
-        else:
-            client.chat_postEphemeral(channel=CHANNEL, user=OWNER,
-                                      text=slack_text_from(result) or "⚠️ The status check returned no ticket list.")
-        log.info("/tickets (all) answered in %ss (%s tickets)", int(time.time() - t0), len(rows or []))
-    except Exception as exc:
-        log.exception("/tickets (all) failed")
-        try:
-            client.chat_postEphemeral(channel=CHANNEL, user=OWNER,
-                                      text=f"⚠️ /tickets failed ({type(exc).__name__}). Check `{LOG}`.")
-        except Exception:
-            pass
-    table_sync(client)
-
 
 _sync_lock = threading.Lock()
 
 
 def table_sync(client) -> bool:
-    """After /tickets: bring the Slack List in line with Jira (runbook step 6b). One at a time; skipped while
-    the hourly check holds runner.lock (it syncs the table itself)."""
+    """When the Jira check sees a change: bring the Slack List in line with Jira (watch.table_sync). One at a time;
+    skipped while the feedback watch holds runner.lock (it syncs the table itself)."""
     lock = HOME / ".claude/jira-automation/runner.lock"
     if lock.exists() and time.time() - lock.stat().st_mtime < 3600:
         log.info("table sync skipped: the hourly check is running")
@@ -947,7 +770,6 @@ def jira_poller(client) -> None:
 
 # ---------- hourly review-feedback watch (moved here from the desktop app, 2026-11-16) ----------
 
-WATCH_PROMPT_FILE = HOME / ".claude/jira-automation/feedback-watch-prompt.md"
 WATCH_STAMP = BASE / "watch-last-run.txt"
 WATCH_EVERY = 3600
 WATCH_CHECK_SECONDS = 300  # safety net only: review-channel events trigger the check instantly (owner 2026-11-18)
@@ -972,7 +794,7 @@ def _watch():
 
 def run_feedback_watch() -> tuple[bool, str]:
     # No Claude run any more: Python reads Jira, the threads and the List; Claude is asked only about a reviewer
-    # message no pattern decides (one short call). The old prompt stays in feedback-watch-prompt.md for reference.
+    # message no pattern decides (one short call, prompts/feedback_check.md).
     return _watch().feedback_watch()
 
 
@@ -1084,7 +906,7 @@ def clean_override(o) -> dict | None:
 
 
 def start_migrate_job(client, key: str, thread_ts: str, override: dict | None = None) -> int:
-    """Queue a /migrate run in an existing thread. Returns how many jobs are ahead."""
+    """Queue a migration (the dashboard's Migrate →) in an existing thread. Returns how many jobs are ahead."""
     position = len(waiting) + (1 if current["key"] else 0)
     update_thread(thread_ts, key=key, status="queued", started=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     waiting.append(key)
@@ -1093,22 +915,17 @@ def start_migrate_job(client, key: str, thread_ts: str, override: dict | None = 
     return position
 
 
-def queue_fix(client, key: str, link: str, notice_ts: str | None = None, feedback_link: str = "",
-              override: dict | None = None) -> int:
-    """Queue a /fix job. From a notice's button, the notice itself is the thread; from /fix, post a 🛠 line.
-    Returns how many jobs are ahead."""
+def queue_fix(client, key: str, link: str, override: dict | None = None) -> int:
+    """Queue a fix round (the dashboard's Fix Now →) in a new run thread. Returns how many jobs are ahead, or -1 when
+    a fix for the ticket is already queued or running."""
     label = f"{key} (fix)"
     if label in waiting or (current.get("key") == key and current.get("kind") == "fix"):
         log.info("fix for %s already queued/running; not duplicated", key)
         return -1
     position = len(waiting) + (1 if current["key"] else 0)
     head = f"🛠 *{key}* — fixing review feedback · {'started' if position == 0 else 'queued'} · session `{key}-fix`"
-    if notice_ts and slack_run_reports():
-        thread_ts = notice_ts
-    else:
-        thread_ts = open_run_thread(client, key, head)
-    update_thread(thread_ts, key=key, mode="fix", status="queued", notice=bool(notice_ts),
-                  feedback_link=feedback_link, started=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    thread_ts = open_run_thread(client, key, head)
+    update_thread(thread_ts, key=key, mode="fix", status="queued", started=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     waiting.append(label)
     jobs.put({"kind": "fix", "key": key, "label": label, "link": link, "thread_ts": thread_ts,
               "override": clean_override(override)})
@@ -1121,138 +938,6 @@ def queue_fix(client, key: str, link: str, notice_ts: str | None = None, feedbac
 def build_app() -> App:
     app = App(token=read_secret("slack-bot-token"))
 
-    @app.command("/fix")
-    def fix(ack, command, client):
-        user = command.get("user_id")
-        parts = (command.get("text") or "").split()
-        if user != OWNER:
-            ack("Not allowed.")
-            log.warning("refused /fix from %s", user)
-            return
-        key = parts[0].upper() if parts else ""
-        link = parts[1].strip("<>") if len(parts) > 1 else ""
-        if not KEY_RE.match(key) or (link and not link.startswith(workspace.SLACK_URL + "/")):
-            ack("Usage: `/fix NJ-12345` (latest feedback in the ticket's thread) or `/fix NJ-12345 <Slack link to the report or feedback message>`")
-            return
-        busy = busy_elsewhere(key)
-        if busy:
-            ack(busy)
-            return
-        position = queue_fix(client, key, link)
-        if position < 0:
-            ack(f"Already fixing {key} — the session includes the newest feedback.")
-        else:
-            ack((f"{key} (fix): starting." if position == 0 else f"{key} (fix): queued ({position} ahead).") + ("" if slack_run_reports() else " Follow it in Claude Tickets."))
-
-    @app.action("start_fix")
-    def start_fix_button(ack, body, client):
-        ack()
-        user = (body.get("user") or {}).get("id")
-        if user != OWNER:
-            log.warning("refused start_fix button from %s", user)
-            return
-        key = ((body.get("actions") or [{}])[0].get("value") or "").upper()
-        if not KEY_RE.match(key):
-            return
-        msg = body.get("message") or {}
-        ts = (body.get("container") or {}).get("message_ts") or msg.get("ts")
-        m = re.search(r"<(" + workspace.SLACK_URL_RE + r"/archives/[^|>]+)", json.dumps(msg.get("blocks") or []).replace("\\/", "/"))
-        busy = busy_elsewhere(key)
-        if busy:
-            client.chat_postEphemeral(channel=CHANNEL, user=OWNER, text=busy)
-            return
-        position = queue_fix(client, key, "", notice_ts=ts, feedback_link=m.group(1) if m else "")
-        if position < 0:
-            blocks = [b for b in (msg.get("blocks") or []) if b.get("type") != "actions"]
-            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"Already fixing {key} — the running session includes this feedback."}]})
-            try:
-                client.chat_update(channel=CHANNEL, ts=ts, text=msg.get("text") or f"Feedback on {key}", blocks=blocks)
-            except Exception:
-                log.exception("could not update the notice")
-            return
-        # replace the button with a plain line so it cannot be pressed twice
-        blocks = [b for b in (msg.get("blocks") or []) if b.get("type") != "actions"]
-        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"🛠 Fixing started{' (queued)' if position else ''} · session `{key}-fix`"}]})
-        try:
-            client.chat_update(channel=CHANNEL, ts=ts, text=msg.get("text") or f"Feedback on {key}", blocks=blocks)
-        except Exception:
-            log.exception("could not update the notice")
-
-    @app.action("start_migrate")
-    def start_migrate_button(ack, body, client):
-        ack()
-        user = (body.get("user") or {}).get("id")
-        if user != OWNER:
-            log.warning("refused start_migrate button from %s", user)
-            return
-        key = ((body.get("actions") or [{}])[0].get("value") or "").upper()
-        if not KEY_RE.match(key):
-            return
-        ts = (body.get("container") or {}).get("message_ts") or (body.get("message") or {}).get("ts")
-        if key in waiting or current.get("key") == key:
-            client.chat_postEphemeral(channel=CHANNEL, user=OWNER, text=f"{key} is already queued or running.")
-            return
-        busy = busy_elsewhere(key)
-        if busy:
-            client.chat_postEphemeral(channel=CHANNEL, user=OWNER, text=busy)
-            return
-        position = len(waiting) + (1 if current["key"] else 0)
-        head = f"▶ *{key}* — {'started' if position == 0 else 'queued'} · session `{key}`"
-        if slack_run_reports():
-            set_head(client, ts, head, blocks=[])  # the notice becomes the run's thread
-            start_migrate_job(client, key, ts)
-        else:
-            set_head(client, ts, f"{head} — follow it in Claude Tickets", blocks=[])
-            start_migrate_job(client, key, open_run_thread(client, key, head))
-
-    @app.command("/tickets")
-    def tickets(ack, command, client):
-        if command.get("user_id") != OWNER:
-            ack("Not allowed.")
-            return
-        arg = (command.get("text") or "").strip().upper()
-        if arg and not KEY_RE.match(arg):
-            ack("Usage: `/tickets` (all your tickets) or `/tickets NJ-12345` (one ticket)")
-            return
-        if arg:
-            ack(local_facts(arg))
-            threading.Thread(target=status_one, args=(client, arg), daemon=True).start()
-        else:
-            ack("_Checking Jira, GitHub and the Claude sessions… (about a minute; the answer appears in " + workspace.REPORT_NAME + ", only for you)_")
-            threading.Thread(target=status_all, args=(client,), daemon=True).start()
-
-    @app.command("/migrate")
-    def migrate(ack, command, client):
-        user = command.get("user_id")
-        arg = (command.get("text") or "").strip()
-        if user != OWNER:
-            ack("Not allowed.")
-            log.warning("refused /migrate from %s", user)
-            return
-        if arg.lower() == "status":
-            running = f"Running: *{current['key']}* ({int(time.time() - current['since'])}s)" if current["key"] and current["since"] else "Running: nothing"
-            ack(f"{running}\nQueued: {', '.join(waiting) or 'nothing'}")
-            return
-        if arg.lower() == "stop":
-            proc = current.get("proc")
-            if proc and proc.poll() is None:
-                proc.terminate()
-                ack(f"Stopping {current['key']}…")
-            else:
-                ack("Nothing is running.")
-            return
-        key = arg.upper()
-        if not KEY_RE.match(key):
-            ack("Usage: `/migrate NJ-12345` · `/migrate status` · `/migrate stop`")
-            return
-        busy = busy_elsewhere(key)
-        if busy:
-            ack(busy)
-            return
-        position = len(waiting) + (1 if current["key"] else 0)
-        ack((f"{key}: starting." if position == 0 else f"{key}: queued ({position} ahead).") + ("" if slack_run_reports() else " Follow it in Claude Tickets."))
-        thread_ts = open_run_thread(client, key, f"▶ *{key}* — {'started' if position == 0 else 'queued'} · session `{key}`")
-        start_migrate_job(client, key, thread_ts)
 
     @app.event("message")
     def on_message(event, client):

@@ -63,11 +63,9 @@ done
 mkdir -p "$HERE/prompts.local"
 ok "prompts.local/ (your own wording for any prompt; empty = the defaults in prompts/)"
 
-# 5. Run instructions next to the code.
-for f in RUNBOOK.md feedback-watch-prompt.md; do
-  if [ -f "$HOME/.claude/jira-automation/$f" ]; then ok "$f"
-  else warn "$f missing"; todo+=("Write ~/.claude/jira-automation/$f (README, 'Set it up for your team')"); fi
-done
+# 5. The runbook next to the code: what every run follows.
+if [ -f "$HOME/.claude/jira-automation/RUNBOOK.md" ]; then ok "RUNBOOK.md"
+else warn "RUNBOOK.md missing"; todo+=("Write ~/.claude/jira-automation/RUNBOOK.md (README, 'Set it up for your team')"); fi
 
 # 6. Tokens.
 mkdir -p "$SECRETS" && chmod 700 "$SECRETS"

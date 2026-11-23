@@ -435,7 +435,7 @@ def state() -> dict:
                      or (s.get("branch") == key)]
         fb = auto.get(key) or {}
         fb_ts = fb.get("feedback_ts")
-        # The hourly watch records whether the newest reviewer feedback is still unanswered; a /fix started
+        # The hourly watch records whether the newest reviewer feedback is still unanswered; a fix started
         # after that feedback also counts as handling it.
         fb_open = bool(fb.get("feedback_open")) and not any(
             r.get("mode") == "fix" and fb_ts and tsnum(r["thread_ts"]) > tsnum(fb_ts) for r in runs)
@@ -642,7 +642,7 @@ def fix_next_step(text: str) -> str | None:
 
 
 def post_note(key: str, text: str) -> tuple[bool, str]:
-    """A running session's mid-run report (the /migrate plan report, owner request 2026-11-17) into its own run
+    """A running session's mid-run report (the migration's plan report, owner request 2026-11-17) into its own run
     conversation: only the ticket that is running right now, so a session cannot write into another ticket's chat."""
     text = (text or "").strip()
     if not KEY_RE.match(key or "") or not text:
@@ -1021,7 +1021,7 @@ def post_reply(channel: str, ts: str, text: str) -> tuple[bool, str]:
     return True, "Reply sent."
 
 
-# ---------- after a /migrate: the review thread's parent message (owner decision 2026-11-16) ----------
+# ---------- after a migration: the review thread's parent message (owner decision 2026-11-16) ----------
 
 LEAD = W.REVIEWER_USER   # the reviewer
 AUTO_STATE = None       # set lazily: ~/.claude/jira-automation/state.json
@@ -1213,7 +1213,7 @@ def on_job_finished(client=None, key: str = "", kind: str = "", mode: str = "", 
             b.log.exception("ready-for-review step failed for %s", key)
             b.post(client, thread_ts, f"⚠️ The ready-for-review step failed ({type(exc).__name__}). "
                                       "Reply in the review thread from Claude Tickets.")
-    # A finished /fix round updates the ticket table's Waiting on + Next step (owner request 2026-11-17).
+    # A finished fix round updates the ticket table's Waiting on + Next step (owner request 2026-11-17).
     # ("fix them now" answered in a Review → chat runs a fix round in that review conversation, mode "review")
     if mode in ("fix", "review") and KEY_RE.match(key or ""):
         nxt = fix_next_step(text)
@@ -1292,7 +1292,7 @@ def bot_avatar() -> bytes:
             return f.read_bytes()
     except Exception:
         b.log.exception("could not fetch the bot avatar")
-    return f.read_bytes() if f.exists() else (b.HOME / ".claude/jira-automation/claude-report-icon.png").read_bytes()
+    return f.read_bytes() if f.exists() else (HERE / "app" / "AppIcon-1024.png").read_bytes()
 
 
 # ---------- the ticket table (Slack List "My Jira tickets"), read only ----------
@@ -1480,14 +1480,14 @@ def handle_get(self):
             if path == "/api/table":
                 return self._json(200, cached("table", 30, fetch_table))
             if path == "/appicon.png":  # the desktop app's own icon
-                f = b.HOME / ".claude/jira-automation/tickets-app/AppIcon-1024.png"
+                f = HERE / "app" / "AppIcon-1024.png"
                 return self._send(200, f.read_bytes(), "image/png")
             if path == "/avatar.png":
                 return self._send(200, bot_avatar(), "image/png")
             if path == "/emoji.json":   # Slack's emoji names (iamcal emoji-data 15.1.2), for :shortcode: suggestions
                 return self._send(200, (HERE / "emoji.json").read_bytes(), "application/json; charset=utf-8")
             if path == "/icon.png":
-                return self._send(200, (b.HOME / ".claude/jira-automation/claude-report-icon.png").read_bytes(), "image/png")
+                return self._send(200, (HERE / "app" / "AppIcon-1024.png").read_bytes(), "image/png")
             if path == "/api/state":
                 return self._json(200, state())
             if path == "/api/template":

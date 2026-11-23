@@ -85,17 +85,16 @@ chmod 600 ~/.claude/secrets/*
 
 ## Set it up for your team
 
-The app knows no team's process. Everything about how **your** team works lives in six places. The app never needs
+The app knows no team's process. Everything about how **your** team works lives in five places. The app never needs
 to know your skills or tools: only your runbook names them.
 
 | # | What | Where | What you put in it |
 |---|---|---|---|
 | 1 | **Workspace IDs** | `workspace.json` (from `workspace.example.json`) | your Slack channels, Slack List and its columns, your Slack user, the bot, the reviewer (name, Slack ID, optional honorific such as `-san`), your Jira site and fields, your GitHub repo and local checkout. Setup step 6 says where to find each |
 | 2 | **Workflow** | `workflow.json` (from `workflow.example.json`) | your Jira status name for each role (`open`, `dev`, `review`, `blocked`, `released`), your JQL, the words your runs' reports start with, your Slack List's options, an optional hide marker, and the **messages** the app posts for you in the review thread (setup step 7) |
-| 3 | **Prompts** (optional) | `prompts.local/<name>.md` | your own wording for any prompt in `prompts/`. Copy one there and edit it; a local file always wins |
+| 3 | **Prompts** (optional) | `prompts.local/<name>.md` | your own wording for any prompt in `prompts/` (the runs, the chat, and `feedback_check`, the yes/no question the watch asks about an unclear reviewer message). Copy one there and edit it; a local file always wins |
 | 4 | **Runbook** | `~/.claude/jira-automation/RUNBOOK.md` | your process step by step: how a run investigates, builds and reviews a ticket, **which skills and checks it runs**, the PRs, the Jira moves and the report format (with the report words from #2) |
-| 5 | **Feedback watch prompt** | `~/.claude/jira-automation/feedback-watch-prompt.md` | how Claude should judge a reviewer message the watch can't classify by itself |
-| 6 | **Slack, tokens and launchd** | your Slack app and List, `~/.claude/secrets/`, the launchd job | Setup steps 4, 5 and 8 (`install.sh` makes the folder and writes the job) |
+| 5 | **Slack, tokens and launchd** | your Slack app and List, `~/.claude/secrets/`, the launchd job | Setup steps 4, 5 and 8 (`install.sh` makes the folder and writes the job) |
 
 Your settings, prompts, runbook and tokens stay on your Mac: git ignores them, so pulling a new version of the app
 never touches them. Back them up yourself; a fresh clone needs them again.
@@ -182,17 +181,15 @@ Slack is where the review happens and where your ticket table lives. The bridge 
 **Create the app** at https://api.slack.com/apps → **Create New App** → From scratch:
 
 1. **Socket Mode**: turn it on. Create an **app-level token** with `connections:write` → `slack-app-token`.
-2. **Interactivity**: turn it on. No request URL is needed with Socket Mode.
-3. **Bot Token Scopes** (OAuth & Permissions): `chat:write`, `commands`, `channels:history`, `groups:history`,
+2. **Bot Token Scopes** (OAuth & Permissions): `chat:write`, `channels:history`, `groups:history`,
    `users:read`, `files:read`, `lists:read`, `lists:write`. The bot posts in the report channel and edits the List.
-4. **User Token Scopes**: `channels:history`, `groups:history`, `chat:write`, `users:read`, `files:read`.
+3. **User Token Scopes**: `channels:history`, `groups:history`, `chat:write`, `users:read`, `files:read`.
    The dashboard reads the review threads and posts your replies **as you**.
-5. **Event Subscriptions**: turn them on. Under **Subscribe to events on behalf of users**, add
+4. **Event Subscriptions**: turn them on. Under **Subscribe to events on behalf of users**, add
    `message.channels` and `message.groups`. A new message in a review thread then reaches the app at once.
-6. **Slash Commands** (optional): `/migrate`, `/fix` and `/tickets` still work as a fallback to the dashboard.
-7. **Install to Workspace**. Save the bot token (`xoxb-…`) as `slack-bot-token` and the user token (`xoxp-…`)
+5. **Install to Workspace**. Save the bot token (`xoxb-…`) as `slack-bot-token` and the user token (`xoxp-…`)
    as `slack-user-token`.
-8. Invite the bot to your report channel: `/invite @YourApp`.
+6. Invite the bot to your report channel: `/invite @YourApp`.
 
 ### 6. Your workspace IDs
 
@@ -225,7 +222,7 @@ Fill it in. Git ignores it, so your IDs never get committed.
 
 ### 7. Your workflow and run instructions
 
-The app knows no team's process by itself. You describe yours in four places:
+The app knows no team's process by itself. You describe yours in three places:
 
 1. **`workflow.json`** (copy `workflow.example.json`; without one, the example's generic values are used):
    - `jira.statuses`: your Jira status name for each role the app knows: `open`, `dev` (being worked on),
@@ -246,8 +243,6 @@ The app knows no team's process by itself. You describe yours in four places:
    (`workflow.fill` and `workspace.fill` list them all).
 3. **`~/.claude/jira-automation/RUNBOOK.md`** (not in this repo): your process step by step: how a run investigates,
    builds and reviews, which skills it runs, the PRs, the Jira moves and the report format. Every run reads it first.
-4. **`~/.claude/jira-automation/feedback-watch-prompt.md`** (not in this repo): what the watch asks Claude when a
-   reviewer message is unclear.
 
 ### 8. Start it (macOS launchd)
 

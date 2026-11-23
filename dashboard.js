@@ -136,9 +136,9 @@ function runLine(t) {
   const r = t.run;
   if (r.state === "running") return [`<b>${r.mode === "compact" ? "🗜" : "🛠"} ${({fix: "Fixing", reply: "Continuing", review: "Reviewing", chat: "Chatting", compact: "Compacting the session"})[r.mode] || "Migrating"}</b>`, mins(r.since), r.session_name && `session ${esc(r.session_name)}`].filter(Boolean).join(" · ") + (r.model ? " " + modelTag(r) : "");
   if (r.state === "queued") return `<b>⏳ Queued</b>`;
-  if (!r.state) return t.status === ST().open ? "Not started" : "No Claude run from Slack yet";
+  if (!r.state) return t.status === ST().open ? "Not started" : "No Claude run yet";
   const icon = {finished: "✅", stopped: "⏹", failed: "⚠️", ended_turn: "ℹ️", queued: "⏳"}[r.state] || "•";
-  return `${icon} Last ${({fix: "/fix", reply: "run", review: "review", chat: "chat"})[r.mode] || "/migrate"}: ${esc(r.state === "ended_turn" ? "ended without finishing" : r.state)}${r.when ? " · " + esc(r.when) : ""}${r.model ? " " + modelTag(r) : ""}`;
+  return `${icon} Last ${({fix: "fix", reply: "run", review: "review", chat: "chat"})[r.mode] || "migrate"}: ${esc(r.state === "ended_turn" ? "ended without finishing" : r.state)}${r.when ? " · " + esc(r.when) : ""}${r.model ? " " + modelTag(r) : ""}`;
 }
 
 // Fix Now → / Review → sit at the bottom-right of the card, rightmost, after Chat (owner request 2026-11-16). Fix Now only when
@@ -478,7 +478,7 @@ function renderView() {
     : `<section class="${cls} empty-sec" id="${id}"><h2>${ico}${esc(title)} <span class="n">0</span><span class="idle">· ${esc(emptyText)}</span>${extra}</h2></section>`;
   const nextUp = waiting[0] || toReply[0];
   const queueNext = !live.length && nextUp
-    ? `<button class="rowlink queue-next" data-goto="${esc(nextUp.key)}" title="Jump to that card">Queue next: ${waiting[0] ? "/fix" : "reply"} ${esc(nextUp.key)} →</button>` : "";
+    ? `<button class="rowlink queue-next" data-goto="${esc(nextUp.key)}" title="Jump to that card">Queue next: ${waiting[0] ? "fix" : "reply"} ${esc(nextUp.key)} →</button>` : "";
   const liveSection = section("live", "sec-live", `<span class="dot${live.length ? " run" : ""}"></span>`, "In progress", live,
     "Nothing is being worked on right now.", queueNext);
   const fbSection = section("fb", "sec-fb", `<span class="ico">${IC.alert}</span>`, "Action needed: changes requested", waiting,
