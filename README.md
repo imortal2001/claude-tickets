@@ -261,8 +261,10 @@ was built with tells each run to do, so you can see what to write in yours.
    the APIs, the legacy source, the decisions it took and what to watch out for. The table row becomes
    Waiting on = You, Next step = "Migrating…".
 4. **Builds it** with the project's own migration command for that kind of ticket.
-5. **Reviews it** with the project's reviewers and checks (visual comparison, tests, lint). It fixes what the
-   review finds and reviews again, at most 3 rounds. Only a clean review moves on.
+5. **Reviews it** with the project's reviewers and checks (visual comparison, tests, lint). Any change to what a
+   page renders gets the page reviewer and both visual-comparison skills, whatever kind of ticket it is. It fixes
+   what the review finds and reviews again, at most 3 rounds. Only a clean review moves on. The final report has a
+   **Checks:** line naming every skill it ran and the result, or `not run — <reason>`.
 6. **Opens a draft PR** to `main`, then a **staging PR** with the same commits. It never merges either.
 7. **Moves Jira to In Review.** If Jira's PR-link field is empty, it fills it with the main PR's link first.
 8. **Reports** "<KEY> is migrated" with the routes or summary. The app then posts the ticket's bare Jira link in
@@ -323,8 +325,9 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
   The chat shows ✓ delivered when it arrives.
   Under "Claude is working…" the chat shows what the run is waiting on (a command, or helper agents and when they
   last did something), how long, and whether a note of yours is still queued, so a long wait doesn't look stuck.
-- **Otherwise:** it's a conversation about the ticket. Claude answers or does what you ask, following the same
-  runbook rules, and doesn't post to Slack itself. Ready-made prompts: **Status summary** and **Explain the report**.
+- **Otherwise:** it's a conversation about the ticket. A question gets an answer with evidence, not new work; if
+  the answer shows a required step was skipped, Claude offers to do it ("Option 1 (recommended) …") and waits for
+  you. An instruction gets done, following the same runbook rules. It doesn't post to Slack itself. Ready-made prompts: **Status summary** and **Explain the report**.
 
 ### Review thread
 **Opens from:** the card's review line.

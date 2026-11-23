@@ -159,16 +159,30 @@ Progress: channel {channel}, thread_ts {thread_ts}, bot token in ~/.claude/secre
 (chat.postMessage; never print the token). Nothing else goes to Slack from you. When the work is finished, end with exactly one fenced block tagged `slack` whose FIRST line is
 "<KEY> is migrated" and whose second line is "Status: Dev In Progress → In Review", holding ONLY the final report the
 runbook specifies (routes migrated table for frontend, or the middleware summary, then
-the status block). If something could not be finished, the block is one line naming the blocker.
+the status block, with its "Checks:" line naming every review skill you ran and its result — for a page change that
+is always front-reviewer, /visual-parity and /page-check-suite, whatever the lane). If something could not be finished, the block is one line naming the blocker.
 Slack mrkdwn, at most about 2,500 characters.
 """
 
-REPLY_PROMPT = """The owner replied in the Slack thread for {key}:
+REPLY_PROMPT = """The owner wrote to you about {key} (Claude Tickets chat):
 
 {text}
 
-Continue with that. As before, keep all detail in this session and end your turn with exactly one
-fenced `slack` block holding only the status text for the Slack thread."""
+Read it for what it is (owner rule 2026-11-23: "did you run /visual-parity?" was taken as an order to run it):
+- A QUESTION ("did you …?", "why …?", "is it …?"): answer it from what this session actually did, with the
+  evidence (the command or skill, its result, where its report is). Do not start new work to answer it. If the
+  answer is that something the runbook requires was not done, say so plainly and end with
+  "Option 1 (recommended): <do it now>" and "Option 2: leave it" — the owner chooses in the chat.
+- An INSTRUCTION ("fix …", "run …", "go ahead", "Option 1", "fix them now"): do it, following the runbook as before.
+As before, keep all detail in this session and end your turn with exactly one fenced `slack` block holding only
+the status text (for a question: the short answer)."""
+
+RESUME_PROMPT = """Resuming your work on {key}:
+
+{text}
+
+As before, keep all detail in this session and end your turn with exactly one fenced `slack` block holding only
+the status text for the Slack thread."""
 
 
 REVIEW_PROMPT = """Review request from the owner (Claude Tickets app) for Jira ticket {key}: the ticket is waiting for
@@ -231,7 +245,7 @@ Keep the report's contents, your reasoning and the item-by-item summary in THIS 
 yourself ONLY the in-progress report of the runbook's /fix step 3, right after Jira moves to Dev In
 Progress: channel {channel}, thread_ts {thread_ts}, bot token in ~/.claude/secrets/slack-bot-token
 (chat.postMessage; never print the token). Nothing else goes to Slack from you. When the round is finished, end with exactly one fenced block tagged `slack` in the simple
-"Report back" format of the runbook's /fix step 12 ("<KEY> is fixed", "Status: Dev In Progress → In Review", staging PR, thread). If something could not be finished, the block is one line naming the blocker.
+"Report back" format of the runbook's /fix step 12 ("<KEY> is fixed", "Status: Dev In Progress → In Review", staging PR, a "Checks:" line naming every review skill you ran with its result, thread). If something could not be finished, the block is one line naming the blocker.
 """
 
 
@@ -602,9 +616,9 @@ def worker(client) -> None:
                 res = run_claude(prompt, f"{key}-chat", src, None if src else sid)
             else:
                 update_thread(thread_ts, status="running", last_run=time.strftime("%Y-%m-%d %H:%M"))
-                prompt = REPLY_PROMPT.format(key=key, text=job["text"])
-                if job.get("resume"):   # a Resume → / auto-resume is not a message from the owner
-                    prompt = prompt.replace(f"The owner replied in the Slack thread for {key}:", f"Resuming your work on {key}:", 1)
+                # a Resume → / auto-resume is not a message from the owner, so it is not read as a question
+                prompt = (RESUME_PROMPT if job.get("resume") else REPLY_PROMPT).format(key=key, text=job["text"])
+                if job.get("resume"):
                     _, last = session_size(entry.get("session_id"))
                     if last and time.time() - last > COMPACT_IDLE:   # the cache has expired: summarise before reloading
                         current.update(kind="compact")
