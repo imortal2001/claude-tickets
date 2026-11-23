@@ -290,6 +290,25 @@ def review_turn(thread: dict | None, ttl: float = THREAD_TTL_OTHER) -> dict | No
     return {"owner_last": bool(last.get("mine")), "ts": last["ts"], "time": last.get("time")}
 
 
+SENT_RE = re.compile(r"Sent for review (\d{2})-(\d{2}) (\d{1,2}):(\d{2})")
+
+
+def list_review_turn(next_step: str) -> dict | None:
+    """The review turn from the Slack List's Next step "Sent for review MM-DD HH:MM — …" (what the watch writes when the
+    owner replies in the thread), for a ticket whose thread can't be read (owner 2026-11-23: the review channel was
+    disconnected). None when the List doesn't say."""
+    m = SENT_RE.search(next_step or "")
+    if not m:
+        return None
+    mon, day, hh, mm = map(int, m.groups())
+    now = datetime.now()
+    try:
+        when = datetime(now.year - (1 if mon > now.month else 0), mon, day, hh, mm)
+    except ValueError:
+        return None
+    return {"owner_last": True, "ts": f"{when.timestamp():.6f}", "time": f"{mon:02d}-{day:02d} {hh:02d}:{mm:02d}", "from": "list"}
+
+
 def run_settings_view() -> dict | None:
     """The model and effort the next run uses, and the choices (owner request 2026-11-17). None until the bridge has them."""
     if not hasattr(b, "run_settings"):
@@ -432,6 +451,8 @@ def state() -> dict:
             rthread = None
         ttl = THREAD_TTL_ACTIVE if info.get("status") in WF.ACTIVE else THREAD_TTL_OTHER
         rturn = review_turn(rthread, ttl)
+        if rturn is None and info.get("status") == WF.REVIEW:   # no readable thread: the List still says when it was sent
+            rturn = list_review_turn((steps.get(key) or {}).get("next", ""))
         checking = w["running"] and key in w["keys"]   # the watch started for this reply is still reading it
         unchecked = bool(
             not fb_open and rturn and not rturn["owner_last"] and info.get("status") in WF.ACTIVE

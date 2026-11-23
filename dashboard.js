@@ -183,6 +183,9 @@ function buttons(t) {
   return b.join("");
 }
 
+// When the ticket went to the reviewer: the owner's last message in its review thread, or the List's "Sent for review"
+// time when the thread can't be read. null when neither says (the ticket still waits, just without a clock).
+const waitSince = (t) => (t.review_turn && t.review_turn.owner_last && parseFloat(t.review_turn.ts)) || null;
 function waitAge(ts) {
   const h = (Date.now() / 1000 - parseFloat(ts)) / 3600;
   return h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} days`;
@@ -222,13 +225,14 @@ function card(t) {
     <div class="title"><a class="key" href="${CFG.jira}/browse/${esc(t.key)}" target="_blank">${esc(t.key)}</a>
       <span class="summary" title="${esc(t.jira_summary || t.summary)}">${esc(t.summary)}</span></div>
     <div class="meta">${t._moved ? `<span class="chip status">Jira: ${esc(t.status)}</span>` : ""}${prChips(t.pr)}${fb}${thChip}${
-      t._wait ? `<span class="chip wait" title="Waiting for the reviewer since ${esc(t.review_turn.time)}">${IC.clock}${waitAge(t.review_turn.ts)} wait</span>` : ""}</div>
+      t._wait && waitSince(t) ? `<span class="chip wait" title="Waiting for the reviewer since ${esc(t.review_turn.time)}">${IC.clock}${waitAge(waitSince(t))} wait</span>` : ""}</div>
     ${r.state === "running" && r.activity ? `<div class="activity">${esc(r.activity)}</div>` : ""}
     ${r.state !== "running" && w && w.state === "working" && w.last ? `<div class="activity">${esc(w.last)}</div>` : ""}
     <div class="details">
       <div><span class="i ${r.state === "finished" ? "ok" : ""}">${({finished: IC.check, running: IC.play, queued: IC.dots, stopped: IC.stop, failed: IC.alert, ended_turn: IC.question})[r.state] || IC.dots}</span><span>${runLine(t).replace(/^(✅|⏹|⚠️|ℹ️|⏳|•)\s*/, "")}</span></div>
       ${t._reply ? `<div class="todo"><span class="i ok">${IC.check}</span><span>${replyTodo(t).replace(/^✅\s*/, "")}</span></div>` : ""}
-      ${t._wait ? `<div class="waitline"><span class="i">${IC.hourglass}</span>${t.review_thread ? `<button class="rowlink" ${threadAttrs(t)} title="Open the review thread">` : "<span>"}Sent for review ${esc(t.review_turn.time)} · waiting ${waitAge(t.review_turn.ts)} for the reviewer${t.review_thread ? "</button>" : "</span>"}</div>` : ""}
+      ${t._wait ? `<div class="waitline"><span class="i">${IC.hourglass}</span>${t.review_thread ? `<button class="rowlink" ${threadAttrs(t)} title="Open the review thread">` : "<span>"}${
+        waitSince(t) ? `Sent for review ${esc(t.review_turn.time)} · waiting ${waitAge(waitSince(t))} for the reviewer` : `${esc(ST().review)} · waiting for the reviewer`}${t.review_thread ? "</button>" : "</span>"}</div>` : ""}
       ${t.next_step ? `<div class="next"><span class="i">${IC.arrow}</span><span><span class="lbl">Next:</span> <span class="val">${esc(t.next_step)}</span></span></div>` : ""}
     </div>
     ${elsewhere}
@@ -350,7 +354,7 @@ function renderToday() {
 function statCards() {
   if (!data) return "";
   const st = data.stats || {}, rs = data.run_settings || {}, models = rs.models || {};
-  const {rows, c} = visibleClassified(), waits = c.waitingReview.map((t) => (Date.now() / 1000 - parseFloat(t.review_turn.ts)) / 3600);
+  const {rows, c} = visibleClassified(), waits = c.waitingReview.filter(waitSince).map((t) => (Date.now() / 1000 - waitSince(t)) / 3600);
   const avg = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0, longest = waits.length ? Math.max(...waits) : 0;
   const bad = rows.filter(conflicted);
   const by = st.by_mode || {}, parts = ["fix", "migrate", "review"].filter((m) => by[m]).map((m) => `${by[m]} ${m}`).join(" · ");
@@ -381,7 +385,9 @@ function render() {
 function classify(rows) {
   const isLive = (t) => ["running", "queued"].includes(t.run.state) || t.elsewhere.some((s) => s.state === "working");
   const replyDue = (t) => !isLive(t) && !t.feedback.open && t.reply && t.reply.needed;
-  const reviewWait = (t) => t.status === ST().review && !isLive(t) && !t.feedback.open && !replyDue(t) && t.review_turn && t.review_turn.owner_last;
+  // Every Jira In Review ticket that isn't being worked on, needing changes or needing a reply waits on the reviewer
+  // (owner 2026-11-23: no separate "In Review" group, also when the review thread can't be read).
+  const reviewWait = (t) => t.status === ST().review && !isLive(t) && !t.feedback.open && !replyDue(t);
   return {isLive, replyDue, reviewWait,
     live: rows.filter(isLive), waiting: rows.filter((t) => !isLive(t) && t.feedback.open),
     toReply: rows.filter(replyDue), waitingReview: rows.filter(reviewWait)};
@@ -460,7 +466,7 @@ function renderView() {
   const toReply = c.toReply.map((t) => ({...t, _moved: true, _reply: true})).sort((a, b) => a.key.localeCompare(b.key));
   // The reviewer's turn: the newest message in the review thread is ours.
   const waitingReview = c.waitingReview.map((t) => ({...t, _moved: true, _wait: true}))
-    .sort((a, b) => parseFloat(a.review_turn.ts) - parseFloat(b.review_turn.ts));
+    .sort((a, b) => (waitSince(a) || Infinity) - (waitSince(b) || Infinity));
   const groups = {};
   for (const t of rows.filter((x) => !isLive(x) && !x.feedback.open && !replyDue(x) && !reviewWait(x))) (groups[ORDER.includes(t.status) ? t.status : "Other"] ||= []).push(t);
   const names = [...ORDER, "Other"].filter((g) => groups[g]);

@@ -367,6 +367,10 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
 
 Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** (your day).
 
+On the Board, every ticket in Jira's review status that isn't being worked on, needing changes or needing your reply
+sits under **Waiting for review**, oldest first. Its wait is counted from your last message in the review thread, or
+from the List's "Sent for review <time>" when the thread can't be read.
+
 ## Day to day
 
 - **Restart** after changing `bridge.py`, only when nothing is running (a restart cuts off a run):
