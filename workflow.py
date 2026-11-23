@@ -52,7 +52,8 @@ def jira_status(name: str) -> str:
 
 
 # ---- the words a run's final report starts with (the runbook tells the runs to write them) ----
-_r = _get("reports")
+_r = {k: _get(f"reports.{k}") for k in ("migrated", "fixed", "reviewed", "reviewed_clean", "not_fixed", "not_done",
+                                         "status_line", "staging_line", "plan_go", "plan_no_api")}
 MIGRATED, FIXED, REVIEWED = f" {_r['migrated']}", f" {_r['fixed']}", f" {_r['reviewed']}"   # " is migrated" …
 REVIEWED_CLEAN = _r["reviewed_clean"]                                       # "is reviewed: clean"
 CLEAN_RE = re.compile(r"\s*".join(re.escape(w) for w in REVIEWED_CLEAN.split()), re.I)
@@ -72,8 +73,43 @@ def hidden(summary: str) -> bool:
 
 # ---- the Slack List's option keys (its "Status", "Waiting on", … columns) ----
 LIST_STATUS = {role: _get(f"list_options.status.{role}") for role in ROLES}   # role -> the List's status option
-LIST_WAITING = _get("list_options.waiting")                                   # you / new_api / not_started / skip
+LIST_WAITING = {k: _get(f"list_options.waiting.{k}") for k in ("you", "new_api", "not_started", "skip")}
 LIST_LABELS = _get("list_options.labels")                                     # option key -> label shown
+_get("list_options.labels.you")                                               # the watch compares Waiting on with it
+
+
+# ---- the List's Kind column: which kind a ticket is, and which kinds are out of scope ----
+_k = _get("kinds")
+
+
+def _kind_rule(i: int, r: dict) -> dict:
+    """One kinds rule, checked: it names an option, and its regexes compile. A bad one stops the bridge naming it."""
+    if not isinstance(r, dict) or not r.get("option"):
+        raise SystemExit(f'{FILE}: kinds.rules[{i}] needs an "option" (the List\'s Kind option it sets).')
+    try:
+        return {**r, "_summary": re.compile(r.get("summary") or "", 0 if r.get("case_sensitive", True) else re.I),
+                "_type": re.compile(r.get("issue_type") or "", re.I)}
+    except re.error as exc:
+        raise SystemExit(f"{FILE}: kinds.rules[{i}] has a bad regex: {exc}")
+
+
+KIND_RULES = [_kind_rule(i, r) for i, r in enumerate(_k.get("rules") or [])]
+KIND_DEFAULT, KIND_SKIP = _k.get("default") or "", tuple(_k.get("skip") or ())
+
+
+def kind_of(summary: str, issue_type: str) -> str:
+    """The Kind option for a ticket: the first rule that matches (a rule with "hidden": true matches a hidden ticket;
+    "summary" / "issue_type" are regexes, all given ones must match), else the default ("" = leave the cell empty)."""
+    for r in KIND_RULES:
+        if r.get("hidden") and not hidden(summary):
+            continue
+        if r.get("summary") and not r["_summary"].search(summary or ""):
+            continue
+        if r.get("issue_type") and not r["_type"].search(issue_type or ""):
+            continue
+        if r.get("hidden") or r.get("summary") or r.get("issue_type"):
+            return r["option"]
+    return KIND_DEFAULT
 
 
 def list_status_option(jira_name: str, default: str | None = None,
@@ -84,7 +120,9 @@ def list_status_option(jira_name: str, default: str | None = None,
 
 
 # ---- what the app writes for the owner in the review thread ----
-MESSAGES = _get("messages")
+MESSAGES = {k: _get(f"messages.{k}") for k in ("ready_reply", "reply_ready", "reply_fixed", "greetings")}
+if not (isinstance(MESSAGES["greetings"], list) and len(MESSAGES["greetings"]) == 3):
+    raise SystemExit(f"{FILE}: messages.greetings must list three greetings: morning, afternoon, evening.")
 
 
 def message(name: str, **values) -> str:
@@ -93,8 +131,9 @@ def message(name: str, **values) -> str:
     keep = []
     for line in MESSAGES[name].split("\n"):
         names = re.findall(r"{(\w+)}", line)
-        if all(values.get(n) for n in names):
-            keep.append(line.format(**values))
+        if all(values.get(n) for n in names if n in values):
+            # only known {name}s are filled; any other brace in the team's text stays as written
+            keep.append(re.sub(r"{(\w+)}", lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), line))
     return "\n".join(keep)
 
 

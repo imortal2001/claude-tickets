@@ -91,7 +91,7 @@ to know your skills or tools: only your runbook names them.
 | # | What | Where | What you put in it |
 |---|---|---|---|
 | 1 | **Workspace IDs** | `workspace.json` (from `workspace.example.json`) | your Slack channels, Slack List and its columns, your Slack user, the bot, the reviewer (name, Slack ID, optional honorific such as `-san`), your Jira site and fields, your GitHub repo and local checkout. Setup step 6 says where to find each |
-| 2 | **Workflow** | `workflow.json` (from `workflow.example.json`) | your Jira status name for each role (`open`, `dev`, `review`, `blocked`, `released`), your JQL, the words your runs' reports start with, your Slack List's options, an optional hide marker, and the **messages** the app posts for you in the review thread (setup step 7) |
+| 2 | **Workflow** | `workflow.json` (from `workflow.example.json`) | your Jira status name for each role (`open`, `dev`, `review`, `blocked`, `released`), your JQL, the words your runs' reports start with, your Slack List's options, an optional hide marker, how a ticket's **kind** is chosen, and the **messages** the app posts for you in the review thread (setup step 7) |
 | 3 | **Prompts** (optional) | `prompts.local/<name>.md` | your own wording for any prompt in `prompts/` (the runs, the chat, and `feedback_check`, the yes/no question the watch asks about an unclear reviewer message). Copy one there and edit it; a local file always wins |
 | 4 | **Runbook** | `~/.claude/jira-automation/RUNBOOK.md` | your process step by step: how a run investigates, builds and reviews a ticket, **which skills and checks it runs**, the PRs, the Jira moves and the report format (with the report words from #2) |
 | 5 | **Slack, tokens and launchd** | your Slack app and List, `~/.claude/secrets/`, the launchd job | Setup steps 4, 5 and 8 (`install.sh` makes the folder and writes the job) |
@@ -233,6 +233,9 @@ The app knows no team's process by itself. You describe yours in three places:
      and its `Status:` / `Staging PR:` lines. The app reads the reports by these words, so your runbook must use them.
    - `list_options`: your Slack List's option keys for its Status and Waiting on columns, and the labels shown.
    - `hide`: a summary marker for tickets the board can hide (the "Hide …" toggle); empty = no toggle.
+   - `kinds`: how the List's Kind column is chosen: `rules` (first match wins; `summary` and `issue_type` are regexes,
+     `"hidden": true` matches a hidden ticket, `"case_sensitive": false` ignores case), the `default` option (`""` =
+     leave Kind empty) and the `skip` kinds that are out of scope (their row says "Out of scope", Waiting on = skip).
    - `messages`: what the app posts **as you** in the review thread: `ready_reply` after a migration, and the
      `reply_ready` / `reply_fixed` drafts in the reply box, plus the three `greetings` (morning / afternoon / evening).
      Placeholders: `{reviewer_mention}` (the reviewer's Slack mention with the honorific), `{reviewer_at}` ("@Name"
@@ -240,7 +243,11 @@ The app knows no team's process by itself. You describe yours in three places:
 2. **`prompts/`**: what each run is told (migrate, fix, review, chat, …). The defaults just say "follow your runbook".
    To change one, copy it into **`prompts.local/`** with the same name and edit it there; a local file always wins.
    Prompts can use `@@MARKERS@@` for your settings: `@@DEV@@`, `@@REVIEW@@`, `@@JQL@@`, `@@MIGRATED@@`, `@@REVIEWER@@`, …
-   (`workflow.fill` and `workspace.fill` list them all).
+   (`workflow.fill` and `workspace.fill` list them all). The app also fills each prompt's own `{placeholders}`:
+   `start`/`fix`: `{key}` `{repo}` `{runbook}` `{channel}` `{thread_ts}` (fix also `{link_line}`); `review`: `{key}`
+   `{repo}` `{runbook}`; `chat`: `{key}` `{repo}` `{runbook}` `{text}`; `chat_fork_intro`: `{run}` `{key}`; `reply`/`resume`: `{key}` `{text}`;
+   `auto_resume`: `{n}` `{max}`; `feedback_check`: `{text}`. Because of that, write a literal brace as `{{` or `}}`
+   (a JSON example in a prompt, say); a single `{` stops the run.
 3. **`~/.claude/jira-automation/RUNBOOK.md`** (not in this repo): your process step by step: how a run investigates,
    builds and reviews, which skills it runs, the PRs, the Jira moves and the report format. Every run reads it first.
 

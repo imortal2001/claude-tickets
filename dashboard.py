@@ -149,9 +149,10 @@ def fetch_next_steps() -> dict:
     return out
 
 
-def _tail_records(session_id: str, size: int = 300_000) -> list[dict]:
-    """The last records of a session's transcript (about the last 300 KB), oldest first; [] when there is none."""
-    f = transcript_path(session_id)
+def _tail_records(session_id: str, size: int = 300_000, path: Path | None = None) -> list[dict]:
+    """The last records of a session's transcript (about the last 300 KB), oldest first; [] when there is none.
+    path: the transcript when the caller already looked it up."""
+    f = path or transcript_path(session_id)
     if not f:
         return []
     try:
@@ -188,12 +189,13 @@ def last_activity(session_id: str, records: list[dict] | None = None) -> str:
     return ""
 
 
-def run_waiting(session_id: str, records: list[dict] | None = None) -> dict:
+def run_waiting(session_id: str, records: list[dict] | None = None, path: Path | None = None) -> dict:
     """What a running session is waiting on (owner request 2026-11-20: a long wait looked like a stuck chat).
     calls: its tool calls with no result yet, oldest first, each {tool, what, since}; helpers_at: when its helper
     agents last wrote (only while it waits on one); notes: the owner's add-on notes still queued for it. A note
     reaches the session only after its current call ends, so this is also when the chat's question gets read."""
-    recs = records if records is not None else _tail_records(session_id)
+    f = path or transcript_path(session_id)
+    recs = records if records is not None else _tail_records(session_id, path=f)
     done = {c.get("tool_use_id") for r in recs for c in _blocks(r) if c.get("type") == "tool_result"}
     calls = []
     for r in recs:
@@ -209,7 +211,6 @@ def run_waiting(session_id: str, records: list[dict] | None = None) -> dict:
                 calls.append({"tool": c.get("name"), "since": since,
                               "what": str(i.get("description") or i.get("subagent_type") or c.get("name"))[:120]})
     helpers_at = None
-    f = transcript_path(session_id)
     if f and any(c["tool"] in ("Agent", "Task") for c in calls):
         times = [s.stat().st_mtime for s in (f.parent / session_id / "subagents").glob("*.jsonl")]
         helpers_at = max(times) if times else None
@@ -451,7 +452,9 @@ def state() -> dict:
             rthread = None
         ttl = THREAD_TTL_ACTIVE if info.get("status") in WF.ACTIVE else THREAD_TTL_OTHER
         rturn = review_turn(rthread, ttl)
-        if rturn is None and info.get("status") == WF.REVIEW:   # no readable thread: the List still says when it was sent
+        # No thread, or one that can't be read: the List still says when it was sent. (A readable thread with only its
+        # parent has no turn yet, and an older round's List time would be wrong for it.)
+        if rturn is None and info.get("status") == WF.REVIEW and (not rthread or thread_cached(rthread, ttl).get("error")):
             rturn = list_review_turn((steps.get(key) or {}).get("next", ""))
         checking = w["running"] and key in w["keys"]   # the watch started for this reply is still reading it
         unchecked = bool(
@@ -463,9 +466,10 @@ def state() -> dict:
         if unchecked and not checking:
             fresh.append(key)
         live_sid = latest["session_id"] if (latest and latest.get("session_id") and running) else None
-        records = _tail_records(live_sid) if live_sid else []
+        tpath = transcript_path(live_sid) if live_sid else None   # looked up once: it globs every project folder
+        records = _tail_records(live_sid, path=tpath) if tpath else []
         activity = last_activity(live_sid, records) if live_sid else ""
-        waiting = run_waiting(live_sid, records) if live_sid else {}
+        waiting = run_waiting(live_sid, records, tpath) if tpath else {}
         # Finished fix / migration with no reply from the owner in the review thread since -> the reply is still due.
         reply = None
         work = next((r for r in runs if r.get("mode") not in ("chat", "review")), None)   # reviews / chats need no reply
@@ -1425,8 +1429,14 @@ def _maybe_reload() -> None:
             mod._MTIME = current
             return
         saved_b, saved_client = mod.b, mod.client
-        importlib.reload(mod)
-        mod.b, mod.client = saved_b, saved_client
+        try:
+            importlib.reload(mod)
+        except BaseException as exc:   # e.g. a settings check stopping on a mistake: keep serving with what loaded
+            saved_b.log.error("dashboard reload failed (%s: %s); keeping the running version", type(exc).__name__, exc)
+            mod._MTIME = current
+            return
+        finally:
+            mod.b, mod.client = saved_b, saved_client
         saved_b.log.info("dashboard reloaded")
 
 

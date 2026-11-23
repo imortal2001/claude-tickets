@@ -460,11 +460,11 @@ def worker(client) -> None:
                                       text=text, thread_ts=thread_ts)
                     if job["kind"] == "start" or (entry.get("mode") is None and job["kind"] == "reply" and not entry.get("notice") and entry.get("key") == key and "migrated" in text.splitlines()[0]):
                         first = text.splitlines()[0]
-                        head = f"✅ *{key}* — migrated · staging PR ready (details in thread)" if workflow.MIGRATED in first else f"⚠️ *{key}* — not finished (see thread)"
+                        head = f"✅ *{key}* — migrated (details in thread)" if workflow.MIGRATED in first else f"⚠️ *{key}* — not finished (see thread)"
                         set_head(client, thread_ts, head)
                     if (entry.get("mode") or job["kind"]) == "fix":
                         done = workflow.FIXED in text.splitlines()[0]
-                        head = f"✅ *{key}* — feedback fixed · staging PR ready (details in thread)" if done else f"⚠️ *{key}* — could not be fixed (see thread)"
+                        head = f"✅ *{key}* — feedback fixed (details in thread)" if done else f"⚠️ *{key}* — could not be fixed (see thread)"
                         link = entry.get("feedback_link")
                         set_head(client, thread_ts, head + (f"\n<{link}|{link}>" if link else ""), blocks=[])
                 elif (entry.get("mode") or job["kind"]) == "fix":

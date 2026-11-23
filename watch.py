@@ -282,16 +282,8 @@ def review_thread(key: str, row: dict | None = None) -> str | None:
 
 
 def kind_of(key: str, info: dict) -> str:
-    s = info["summary"]
-    if WF.hidden(s):
-        return "next_js"
-    if re.search(r"beforeFilter|Component|middleware", s, re.I):
-        return "middleware"
-    if info["type"].lower().startswith("sub") and re.match(r"\s*\[(WEB|API)\]", s):
-        return "legacy"
-    if re.search(r"\bAPI\b", s):
-        return "api"
-    return "frontend"
+    """The List's Kind option for a ticket: workflow.json's kinds rules ("" = leave the cell empty)."""
+    return WF.kind_of(info["summary"], info["type"])
 
 
 # ---------- Waiting on: the owner has answered (owner request 2026-11-18) ----------
@@ -383,7 +375,7 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
         if key in rows:
             continue
         kind = kind_of(key, info)
-        skip = kind in ("next_js", "legacy")
+        skip = kind in WF.KIND_SKIP
         pr_url = info["v2pr"] if PR_NUM_RE.search(info["v2pr"] or "") else ""
         num = PR_NUM_RE.search(pr_url).group(1) if pr_url else None
         ts = review_thread(key)
@@ -392,7 +384,7 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
             _cell(colids, "ticket", text=key, url=f"{b.JIRA_SITE}/browse/{key}"),
             _cell(colids, "summary", text=info["summary"][:180]),
             _cell(colids, "status", select=status),
-            _cell(colids, "kind", select=kind),
+            *([_cell(colids, "kind", select=kind)] if kind else []),
             _cell(colids, "pr_state", select=pr_state(num) if num else "no_pr"),
             _cell(colids, "waiting", select=WF.LIST_WAITING["skip"] if skip else (W.REVIEWER_OPTION if status == WF.LIST_STATUS["review"]
                                                             else WF.LIST_WAITING["not_started"])),

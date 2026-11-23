@@ -1,6 +1,6 @@
 // Claude Tickets — the dashboard's script (served at /dashboard.js). Loaded at the end of <body>.
 // The team's workflow, from workflow.json via /api/state (applyWorkflow): Jira status names by role, the board's order.
-let ORDER = [], STATUS_RANK = {}, STATUS_TONE = {};
+let ORDER = [], STATUS_RANK = {}, STATUS_TONE = {}, REPORT_RE = /(?!)/;
 const ST = () => CFG.status || {};
 const roleOf = (status) => Object.keys(ST()).find((role) => ST()[role] === status);
 // The board section of a Jira status, named by role so the CSS edge colours work for any team's status names.
@@ -10,6 +10,9 @@ function applyWorkflow() {
   ORDER = CFG.order || [];
   STATUS_RANK = Object.fromEntries([...ORDER, s.released].filter(Boolean).map((name, i) => [name, i]));
   STATUS_TONE = {[s.review]: "info", [s.dev]: "warn", [s.blocked]: "bad", [s.released]: "ok"};
+  // A run's final report: its first line holds one of the workflow's report words ("is migrated", …); no words = none.
+  const words = (CFG.reportWords || []).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  REPORT_RE = words.length ? new RegExp("\\b(" + words.join("|") + ")\\b") : /(?!)/;
   $("hideToggle").hidden = !CFG.hideMarker;
   $("hideLabel").textContent = `Hide ${CFG.hideLabel || ""}`;
 }
@@ -405,8 +408,6 @@ function visibleClassified() {
 }
 // A ticket whose summary holds the workflow's hide marker (e.g. "[NEXTJS]"): hidden by the "Hide …" toggle and never
 // offered Migrate →.
-// A run's final report: its first line starts with one of the workflow's report words ("is migrated", …).
-const reportRe = () => new RegExp("\\b(" + (CFG.reportWords || []).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b");
 const isHidden = (t) => !!CFG.hideMarker && (t.jira_summary || t.summary || "").toUpperCase().includes(CFG.hideMarker.toUpperCase());
 function visibleTickets() {
   const hide = $("hideSkip").checked;
@@ -805,7 +806,7 @@ function chatHtml(msgs) {
       return `<div class="c-sys"><span class="ic">${esc(ic)}</span><span class="tx">${mrkdwn(m.text.slice(ic === "•" ? 0 : ic.length).trim())}</span><span class="when">${hhmm(m.time)}</span></div>`;
     }
     const choose = m === last && decision ? `<button class="primary c-choose" data-decide="${esc(m.ts)}">Choose an option…</button>` : "";
-    const report = reportRe().test((m.text.split("\n")[0] || ""));
+    const report = REPORT_RE.test((m.text.split("\n")[0] || ""));
     return `<div class="c-row"><img class="c-avatar" src="/avatar.png" alt=""><div class="c-msg${report ? " report" : ""}"><div class="c-head"><b>${esc(m.who)}</b>${
       report ? '<span class="tag">Report</span>' : ""}<span class="when">${hhmm(m.time)}</span></div>
       ${long(mrkdwn(m.text), m.text)}${files}${choose}</div></div>`;

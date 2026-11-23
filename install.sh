@@ -54,7 +54,10 @@ ok "Python environment: $VENV (slack_bolt)"
 
 # 4. Settings: copied from the examples once, then yours.
 for f in workspace workflow; do
-  if [ -f "$HERE/$f.json" ]; then ok "$f.json (yours, kept)"
+  if [ "$f" = workspace ] && [ -f "$HERE/$f.json" ] && grep -q '…' "$HERE/$f.json"; then
+    # still the example's placeholders ("U… your Slack user id"): starting the bridge on them would fail
+    warn "workspace.json still has the example's placeholders (…)"; todo+=("Fill in workspace.json: your Slack, Jira and GitHub IDs and the reviewer (README step 6)")
+  elif [ -f "$HERE/$f.json" ]; then ok "$f.json (yours, kept)"
   else cp "$HERE/$f.example.json" "$HERE/$f.json"; warn "$f.json created from the example"
     if [ "$f" = workspace ]; then todo+=("Fill in workspace.json: your Slack, Jira and GitHub IDs and the reviewer (README step 6)")
     else todo+=("Edit workflow.json: your Jira status names, report words, Slack List options (README, 'Set it up for your team')"); fi
