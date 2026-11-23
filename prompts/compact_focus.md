@@ -1,0 +1,1 @@
+Keep: the ticket, every decision and its reason, what is done (files, commits, branches, PRs, test and review results), what is left, every open review finding with its number, the Jira and Slack state, and anything the owner asked or decided. Drop raw command output, file contents, long reports and anything already resolved.

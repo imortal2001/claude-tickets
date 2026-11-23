@@ -28,6 +28,8 @@ the reviewer leaves feedback, lets you start the fix with one click, and keeps y
 | Feedback watch | `watch.py` | finds new reviewer feedback and keeps the Slack List in sync. Plain Python; it only asks Claude when a message is unclear |
 | Add-on hook | `addon_hook.py` | passes the notes you type in the chat to a run while it works |
 | Workspace settings | `workspace.py`, `workspace.json` | your Slack, Jira and GitHub IDs (`workspace.json` is yours and not in git) |
+| Workflow settings | `workflow.py`, `workflow.json` | your Jira status names, report words, Slack List options and hide marker (`workflow.json` is yours and not in git; `workflow.example.json` is the template) |
+| Prompts | `prompts/`, `prompts.local/` | what each run is told: generic defaults in `prompts/`, your own wording in `prompts.local/` (not in git) |
 
 ## The tools it uses
 
@@ -181,13 +183,27 @@ Fill it in. Git ignores it, so your IDs never get committed.
 | `github.repo` | `owner/name` of your project repo |
 | `github.local_checkout` | where you cloned the project, e.g. `~/code/project` |
 
-### 7. Your run instructions
+### 7. Your workflow and run instructions
 
-The runs follow two files that are **not in this repo**, because they describe one team's process. Write your own:
+The app knows no team's process by itself. You describe yours in four places:
 
-- `~/.claude/jira-automation/RUNBOOK.md`: how a run migrates, fixes and reviews a ticket, and what it reports.
-  Every run is pointed at it.
-- `~/.claude/jira-automation/feedback-watch-prompt.md`: what the watch asks Claude when a reviewer message is unclear.
+1. **`workflow.json`** (copy `workflow.example.json`; without one, the example's generic values are used):
+   - `jira.statuses`: your Jira status name for each role the app knows: `open`, `dev` (being worked on),
+     `review` (waiting for the reviewer), `blocked`, `released`. The board groups, colours and buttons follow the roles.
+   - `jira.jql`: which tickets are yours. `jira.board_order`: the board's status groups, top to bottom.
+     `jira.watch_issue_types`: issue types the feedback watch reads (empty = all).
+   - `reports`: the words your runs start their final report with (`is migrated`, `is fixed`, `is reviewed: clean`, …)
+     and its `Status:` / `Staging PR:` lines. The app reads the reports by these words, so your runbook must use them.
+   - `list_options`: your Slack List's option keys for its Status and Waiting on columns, and the labels shown.
+   - `hide`: a summary marker for tickets the board can hide (the "Hide …" toggle); empty = no toggle.
+2. **`prompts/`**: what each run is told (migrate, fix, review, chat, …). The defaults just say "follow your runbook".
+   To change one, copy it into **`prompts.local/`** with the same name and edit it there; a local file always wins.
+   Prompts can use `@@MARKERS@@` for your settings: `@@DEV@@`, `@@REVIEW@@`, `@@JQL@@`, `@@MIGRATED@@`, `@@REVIEWER@@`, …
+   (`workflow.fill` and `workspace.fill` list them all).
+3. **`~/.claude/jira-automation/RUNBOOK.md`** (not in this repo): your process step by step: how a run investigates,
+   builds and reviews, which skills it runs, the PRs, the Jira moves and the report format. Every run reads it first.
+4. **`~/.claude/jira-automation/feedback-watch-prompt.md`** (not in this repo): what the watch asks Claude when a
+   reviewer message is unclear.
 
 ### 8. Start it (macOS launchd)
 
@@ -357,12 +373,15 @@ Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** 
   ```bash
   launchctl kickstart -k gui/$(id -u)/local.claude-slack-bridge
   ```
-- `dashboard.py`, `watch.py` and the dashboard files reload on their own. `workspace.json` is read once at start:
+- `dashboard.py`, `watch.py` and the dashboard files reload on their own. `workspace.json`, `workflow.json` and the
+  prompts are read once at start:
   restart the bridge after editing it. A missing key stops the bridge with a message naming it (`launchd.err.log`).
 - Runtime files (`jobs.json`, `runlog.json`, logs, `addons/`, `run_settings.json`, …) stay out of git.
 
 ## Rules for changing the code
 
+- Never hardcode a team's process: a Jira status, a report word, a List option or a skill name belongs in
+  `workflow.json` or a prompt file, and the code asks `workflow.py`.
 - Never hardcode an ID: add it to `workspace.json`, `workspace.example.json` and `workspace.py`.
 - Never put a token in this folder; tokens stay in `~/.claude/secrets/`.
 - CSS: one rule per selector. Edit the existing rule; don't add override blocks at the end.

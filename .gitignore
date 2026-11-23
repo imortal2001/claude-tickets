@@ -17,3 +17,6 @@ _old-backups/
 *.bak*
 # the owner workspace IDs (workspace.example.json is the shareable template)
 workspace.json
+# the team workflow and its own prompt wording (workflow.example.json and prompts/ are the shareable defaults)
+workflow.json
+prompts.local/

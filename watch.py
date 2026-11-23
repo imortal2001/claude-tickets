@@ -20,6 +20,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import workflow as WF
 import workspace as W
 
 b = None   # the running bridge module (bind() sets it; bridge.py runs as __main__, so never `import bridge` here)
@@ -40,8 +41,7 @@ def bind(bridge_module, dashboard_module) -> None:
     global b, d, COLS
     b, d = bridge_module, dashboard_module
     COLS = d.COLS
-WATCH_STATUSES = ("In Review", "Dev In Progress")
-TEMPLATE_RE = re.compile(r"\[NEXTJS\]", re.I)
+WATCH_STATUSES = WF.ACTIVE
 
 # What counts as feedback (runbook step 3): "Please review the feedback…", an attached <KEY>.html report,
 # a PR-comment or artifact link, "please fix conflict". "I merged the PR into main" and the like are not.
@@ -136,7 +136,7 @@ def jira_tickets() -> dict[str, dict]:
         for it in data.get("issues") or []:
             f = it.get("fields") or {}
             out[it["key"]] = {"summary": f.get("summary") or "",
-                              "status": ((f.get("status") or {}).get("name") or "").replace("OPEN（オープン）", "OPEN"),
+                              "status": WF.jira_status((f.get("status") or {}).get("name") or ""),
                               "type": (f.get("issuetype") or {}).get("name") or "",
                               "v2pr": f.get(W.JIRA_V2_PR_FIELD) or "", "due": f.get("duedate") or ""}
         token = data.get("nextPageToken")
@@ -283,7 +283,7 @@ def review_thread(key: str, row: dict | None = None) -> str | None:
 
 def kind_of(key: str, info: dict) -> str:
     s = info["summary"]
-    if TEMPLATE_RE.search(s):
+    if WF.hidden(s):
         return "next_js"
     if re.search(r"beforeFilter|Component|middleware", s, re.I):
         return "middleware"
@@ -300,7 +300,7 @@ def kind_of(key: str, info: dict) -> str:
 # the ball is with the reviewer: Waiting on = the reviewer, Next step = "Sent for review <time> — waiting for <reviewer>-san".
 
 # The Next step a move to In Review writes before the owner has replied in the thread.
-IN_REVIEW_NEXT = f"In Review — waiting for {W.REVIEWER}-san"
+IN_REVIEW_NEXT = f"{WF.REVIEW} — waiting for {W.REVIEWER}-san"
 
 
 def stale_next(nxt: str) -> bool:
@@ -314,7 +314,7 @@ def sent_for_review(key: str, row: dict, colids: dict, jira_status: str, fresh: 
     f = row["fields"]
     waiting = d._select(f.get(COLS["waiting"]) or {})
     nxt = d._rich(f.get(COLS["next"]) or {})[0]
-    if jira_status != "In Review" or not (waiting == d.LABELS["you"] or stale_next(nxt)):
+    if jira_status != WF.REVIEW or not (waiting == d.LABELS["you"] or stale_next(nxt)):
         return []
     # No feedback_open check: when the owner's message is the newest in the thread, any earlier feedback has been
     # answered (NJ-101597 stayed on You on 2026-11-19 because the flag from the 10:09 feedback was still set).
@@ -387,15 +387,15 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
         pr_url = info["v2pr"] if PR_NUM_RE.search(info["v2pr"] or "") else ""
         num = PR_NUM_RE.search(pr_url).group(1) if pr_url else None
         ts = review_thread(key)
-        status = {"OPEN": "open", "Dev In Progress": "dev_in_progress", "In Review": "in_review",
-                  "Blocked": "blocked"}.get(info["status"], "open")
+        status = WF.list_status_option(info["status"], WF.LIST_STATUS["open"])
         fields = [
             _cell(colids, "ticket", text=key, url=f"{b.JIRA_SITE}/browse/{key}"),
             _cell(colids, "summary", text=info["summary"][:180]),
             _cell(colids, "status", select=status),
             _cell(colids, "kind", select=kind),
             _cell(colids, "pr_state", select=pr_state(num) if num else "no_pr"),
-            _cell(colids, "waiting", select="skip" if skip else (W.REVIEWER_OPTION if status == "in_review" else "not_started")),
+            _cell(colids, "waiting", select=WF.LIST_WAITING["skip"] if skip else (W.REVIEWER_OPTION if status == WF.LIST_STATUS["review"]
+                                                            else WF.LIST_WAITING["not_started"])),
             _cell(colids, "next", text="Out of scope" if skip else f"/migrate {key}"),
             _cell(colids, "thread", text=f"{key} thread" if ts else "No thread yet", url=thread_link(ts) if ts else None),
         ]
@@ -429,15 +429,15 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
                 r = slack_post("slackLists.items.delete", {"list_id": LIST_ID, "id": rid})
                 if not r.get("ok"):   # fall back to marking it
                     cells += [_cell(colids, "next", rid, text=f"Done or unassigned {today} — delete this row"),
-                              _cell(colids, "waiting", rid, select="skip")]
+                              _cell(colids, "waiting", rid, select=WF.LIST_WAITING["skip"])]
             out["removed"].append(key)
             continue
         to_review = False
         if info["status"] and cur_status != info["status"]:
-            sel = {"OPEN": "open", "Dev In Progress": "dev_in_progress", "In Review": "in_review", "Blocked": "blocked"}.get(info["status"])
+            sel = WF.list_status_option(info["status"])
             if sel:
                 cells.append(_cell(colids, "status", rid, select=sel))
-                to_review = sel == "in_review"
+                to_review = sel == WF.LIST_STATUS["review"]
                 out["changed"].append(f"{key} → {info['status']}")
         # PR: fill from Jira's v2 PR field when the row has none, and refresh its state.
         pr_text, pr_url = d._rich(f.get(COLS["pr"]) or {})
@@ -588,7 +588,7 @@ def _check_ticket(key: str, rows: dict, colids: dict, dry: bool, found: list) ->
     row = rows.get(key)
     if row:
         rid = row["id"]
-        list_update([_cell(colids, "waiting", rid, select="you"),
+        list_update([_cell(colids, "waiting", rid, select=WF.LIST_WAITING["you"]),
                      _cell(colids, "next", rid, text=f"Feedback {datetime.now():%Y-%m-%d}"
                                                      f"{f' ({n} items)' if n else ''} — /fix {key}"),
                      _cell(colids, "thread", rid, text=f"{key} thread", url=thread_link(ts))], dry)
@@ -605,7 +605,7 @@ def feedback_watch(dry: bool = False) -> tuple[bool, str]:
         rows, colids = list_rows()
         found, errors = [], []
         for key, info in sorted(tickets.items()):
-            if info["status"] not in WATCH_STATUSES or info["type"] != "Blade-task":
+            if info["status"] not in WATCH_STATUSES or (WF.WATCH_TYPES and info["type"] not in WF.WATCH_TYPES):
                 continue
             try:
                 _check_ticket(key, rows, colids, dry, found)

@@ -1,5 +1,18 @@
 // Claude Tickets — the dashboard's script (served at /dashboard.js). Loaded at the end of <body>.
-const ORDER = ["Dev In Progress", "In Review", "OPEN", "Blocked"];
+// The team's workflow, from workflow.json via /api/state (applyWorkflow): Jira status names by role, the board's order.
+let ORDER = [], STATUS_RANK = {}, STATUS_TONE = {};
+const ST = () => CFG.status || {};
+const roleOf = (status) => Object.keys(ST()).find((role) => ST()[role] === status);
+// The board section of a Jira status, named by role so the CSS edge colours work for any team's status names.
+const jiraSecId = (status) => "sec-jira-" + (roleOf(status) || status.replace(/\W+/g, "-"));
+function applyWorkflow() {
+  const s = ST();
+  ORDER = CFG.order || [];
+  STATUS_RANK = Object.fromEntries([...ORDER, s.released].filter(Boolean).map((name, i) => [name, i]));
+  STATUS_TONE = {[s.review]: "info", [s.dev]: "warn", [s.blocked]: "bad", [s.released]: "ok"};
+  $("hideToggle").hidden = !CFG.hideMarker;
+  $("hideLabel").textContent = `Hide ${CFG.hideLabel || ""}`;
+}
 // Small line icons (owner 2026-11-20): drawn, so they sit dead centre in their boxes — the text glyphs (◷ ⌛) came
 // from a fallback font and rode low.
 const svg = (d, extra = "") => `<svg class="svgi" viewBox="0 0 16 16" aria-hidden="true" ${extra}>${d}</svg>`;
@@ -33,6 +46,7 @@ async function load() {
     const r = await fetch("/api/state", {cache: "no-store"});
     data = await r.json();
     CFG = data.cfg || CFG;
+    applyWorkflow();
     $("offline").style.display = "none";
     render();
     renderTabs();
@@ -122,7 +136,7 @@ function runLine(t) {
   const r = t.run;
   if (r.state === "running") return [`<b>${r.mode === "compact" ? "🗜" : "🛠"} ${({fix: "Fixing", reply: "Continuing", review: "Reviewing", chat: "Chatting", compact: "Compacting the session"})[r.mode] || "Migrating"}</b>`, mins(r.since), r.session_name && `session ${esc(r.session_name)}`].filter(Boolean).join(" · ") + (r.model ? " " + modelTag(r) : "");
   if (r.state === "queued") return `<b>⏳ Queued</b>`;
-  if (!r.state) return t.status === "OPEN" ? "Not started" : "No Claude run from Slack yet";
+  if (!r.state) return t.status === ST().open ? "Not started" : "No Claude run from Slack yet";
   const icon = {finished: "✅", stopped: "⏹", failed: "⚠️", ended_turn: "ℹ️", queued: "⏳"}[r.state] || "•";
   return `${icon} Last ${({fix: "/fix", reply: "run", review: "review", chat: "chat"})[r.mode] || "/migrate"}: ${esc(r.state === "ended_turn" ? "ended without finishing" : r.state)}${r.when ? " · " + esc(r.when) : ""}${r.model ? " " + modelTag(r) : ""}`;
 }
@@ -143,12 +157,12 @@ function mainAction(t) {
   if (resume) return resume;
   // A finished run waiting on the owner's merge / reply has nothing to fix, even while Jira still says Dev In Progress
   // (e.g. Jira refused In Review until its "v2 PR" field is filled) — owner report 2026-11-17.
-  if (t.status === "Dev In Progress" && !resumable && !(t.reply && t.reply.needed))
+  if (t.status === ST().dev && !resumable && !(t.reply && t.reply.needed))
     return `<button class="primary" data-act="fix" data-key="${k}">Fix Now →</button>`;
-  if (t.status === "In Review")
+  if (t.status === ST().review)
     return `<button class="soft" data-act="review" data-key="${k}" title="Claude re-reviews the PR and reports findings — no code, Jira or Slack changes">Review →</button>`;
   // Migrate → is a main action too, so it lines up with Review → / Resume → on the right (owner 2026-11-20).
-  if (!resumable && t.status === "OPEN" && !isNextjs(t))
+  if (!resumable && t.status === ST().open && !isHidden(t))
     return `<button class="primary" data-act="migrate" data-key="${k}">Migrate →</button>`;
   return "";
 }
@@ -202,7 +216,7 @@ function card(t) {
     ? `<div class="line">🖥 ${w.state === "working" ? "<b>Working now</b> in your Claude session" : "Recent Claude session"}: <b>${esc(w.title)}</b> · last activity ${esc(w.age_min)} min ago</div>` : "";
   // An OPEN ticket Claude has never touched only offers Migrate →. One with a run — e.g. a migration still at
   // its plan step, when Jira stays OPEN until the go — keeps Chat (owner 2026-11-20: NJ-102794 had no Chat).
-  const untouched = t.status === "OPEN" && !r.state && !(t.convs || []).length;
+  const untouched = t.status === ST().open && !r.state && !(t.convs || []).length;
   // Clicking the card itself (not a button or link) opens the team review thread (owner request 2026-11-16).
   return `<div class="card ${r.state === "running" ? "running" : ""}${t.key === openKey ? " open" : ""}" data-key="${esc(t.key)}" ${threadAttrs(t)} ${t.review_thread ? 'title="Click to open the review thread"' : ""}><div class="body">
     <div class="title"><a class="key" href="${CFG.jira}/browse/${esc(t.key)}" target="_blank">${esc(t.key)}</a>
@@ -229,7 +243,6 @@ let tab = (() => { try { return localStorage.getItem("ct-tab") || "board"; } cat
 let table = null, sortBy = {col: "status", dir: 1};
 const TCOLS = [["key", "Ticket"], ["summary", "Summary"], ["status", "Jira status"], ["kind", "Kind"], ["pr", "PR"],
   ["pr_state", "PR state"], ["deadline", "Deadline"], ["waiting", "Waiting on"], ["next", "Next step"], ["thread", "Thread"]];
-const STATUS_RANK = {"Dev In Progress": 0, "In Review": 1, "OPEN": 2, "Blocked": 3, "For Release": 4};
 async function loadTable() {
   try { table = await (await fetch("/api/table", {cache: "no-store"})).json(); } catch (e) { table = {error: "offline", rows: []}; }
   if (tab === "table") render();
@@ -237,7 +250,7 @@ async function loadTable() {
 function tchip(v, kind) {
   const cls = kind === "pr_state" ? ({Mergeable: "ok", Conflicts: "bad", Checking: "warn"}[v] || "")
     : kind === "waiting" ? (v === CFG.reviewer ? "info" : {You: "warn", "New API (blocked)": "bad"}[v] || "")
-    : kind === "status" ? ({"In Review": "info", "Dev In Progress": "warn", Blocked: "bad", "For Release": "ok"}[v] || "") : "";
+    : kind === "status" ? (STATUS_TONE[v] || "") : "";
   return v ? `<span class="tchip ${cls}">${esc(v)}</span>` : "";
 }
 function renderTable() {
@@ -257,7 +270,7 @@ function renderTable() {
     <td class="c-kind">${tchip(r.kind)}</td>
     <td class="c-pr">${r.pr_url ? `<a class="${({Mergeable: "ok", Conflicts: "bad", Checking: "warn"})[r.pr_state] || ""}" href="${esc(r.pr_url)}" target="_blank" title="${esc(r.pr_state)}">${esc(r.pr || "PR")}</a>` : esc(r.pr)}</td>
     <td class="c-pr_state">${tchip(r.pr_state, "pr_state")}</td>
-    <td class="c-deadline ${r.deadline && r.deadline < today && !["In Review", "For Release"].includes(r.status) ? "overdue" : ""}">${esc(r.deadline)}</td>
+    <td class="c-deadline ${r.deadline && r.deadline < today && ![ST().review, ST().released].includes(r.status) ? "overdue" : ""}">${esc(r.deadline)}</td>
     <td class="c-waiting">${tchip(r.waiting, "waiting")}</td>
     <td class="next c-next">${mrkdwn(r.next)}</td>
     <td class="c-thread">${r.thread ? `<button data-thread="${esc(r.thread.channel)}|${esc(r.thread.ts)}" data-name="${esc(r.key)} review thread">Open</button>` : `<span class="tchip">${esc(r.thread_text || "—")}</span>`}</td>
@@ -368,7 +381,7 @@ function render() {
 function classify(rows) {
   const isLive = (t) => ["running", "queued"].includes(t.run.state) || t.elsewhere.some((s) => s.state === "working");
   const replyDue = (t) => !isLive(t) && !t.feedback.open && t.reply && t.reply.needed;
-  const reviewWait = (t) => t.status === "In Review" && !isLive(t) && !t.feedback.open && !replyDue(t) && t.review_turn && t.review_turn.owner_last;
+  const reviewWait = (t) => t.status === ST().review && !isLive(t) && !t.feedback.open && !replyDue(t) && t.review_turn && t.review_turn.owner_last;
   return {isLive, replyDue, reviewWait,
     live: rows.filter(isLive), waiting: rows.filter((t) => !isLive(t) && t.feedback.open),
     toReply: rows.filter(replyDue), waitingReview: rows.filter(reviewWait)};
@@ -384,11 +397,14 @@ function visibleClassified() {
   }
   return visMemo;
 }
-// A Next.js template ticket ("[NEXTJS]" in its summary): hidden by "Hide Next.js" and never offered Migrate →.
-const isNextjs = (t) => (t.jira_summary || t.summary || "").toUpperCase().includes("[NEXTJS]");
+// A ticket whose summary holds the workflow's hide marker (e.g. "[NEXTJS]"): hidden by the "Hide …" toggle and never
+// offered Migrate →.
+// A run's final report: its first line starts with one of the workflow's report words ("is migrated", …).
+const reportRe = () => new RegExp("\\b(" + (CFG.reportWords || []).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")\\b");
+const isHidden = (t) => !!CFG.hideMarker && (t.jira_summary || t.summary || "").toUpperCase().includes(CFG.hideMarker.toUpperCase());
 function visibleTickets() {
   const hide = $("hideSkip").checked;
-  return (data ? data.tickets : []).filter((t) => !hide || !isNextjs(t));
+  return (data ? data.tickets : []).filter((t) => !hide || !isHidden(t));
 }
 function sidebar() {
   if (!data) return;
@@ -409,7 +425,7 @@ function sidebar() {
     line("sec-wait", "var(--info)", "Waiting for review", c.waitingReview.length)}</div>
     <div class="qsub">By Jira status</div><div class="qlist">${
     [...ORDER, "Other"].map((st) => [st, jiraCount(st)]).filter(([st, n]) => n || st !== "Other")
-      .map(([st, n]) => line("sec-jira-" + st.replace(/\W+/g, "-"), st === "Blocked" ? "var(--bad)" : st === "OPEN" ? "var(--faint)" : "var(--muted)", st, n)).join("")}</div>
+      .map(([st, n]) => line(jiraSecId(st), st === ST().blocked ? "var(--bad)" : st === ST().open ? "var(--faint)" : "var(--muted)", st, n)).join("")}</div>
     <div class="qlist qfoot">${line("", "var(--bad)", "Merge conflicts", bad)}</div>
     <div class="ratio"><span>Mergeable ratio</span><i>${pct}% (${ok}/${withPr.length})</i></div>
     <div class="bar" role="img" aria-label="${ok} of ${withPr.length} PRs mergeable"><span style="width:${pct}%;background:var(--ok)"></span><span style="width:${withPr.length ? bad / withPr.length * 100 : 0}%;background:var(--bad)"></span></div>`;
@@ -433,7 +449,7 @@ function renderView() {
   health();
   const q = $("q").value.trim().toLowerCase(), hide = $("hideSkip").checked;
   const rows = data.tickets.filter((t) =>
-    (!hide || !isNextjs(t)) &&
+    (!hide || !isHidden(t)) &&
     (!q || (t.key + " " + t.summary).toLowerCase().includes(q)));
   const c = classify(rows), {isLive, replyDue, reviewWait} = c;
   // 1) In progress: Claude is working on it now. 2) Feedback waiting: a reviewer asked for changes and nothing has
@@ -467,7 +483,7 @@ function renderView() {
     "Nothing is waiting on the reviewer.");
   const jira = names.length
     ? '<div class="jira-label">By Jira status</div>' +
-      names.map((g) => `<section id="sec-jira-${esc(g.replace(/\W+/g, "-"))}">${head("", g, groups[g].length)}${groups[g].sort((a, b) => a.key.localeCompare(b.key)).map(card).join("")}</section>`).join("")
+      names.map((g) => `<section id="${esc(jiraSecId(g))}">${head("", g, groups[g].length)}${groups[g].sort((a, b) => a.key.localeCompare(b.key)).map(card).join("")}</section>`).join("")
     : "";
   const anchor = listAnchor();
   $("list").innerHTML = liveSection + fbSection + doneSection + waitSection +
@@ -603,7 +619,7 @@ function runFacts() {
 }
 const CONFIRM = {
   migrate: (key) => ({kicker: "Start a migration", title: "Migrate?", key, ok: "Migrate",
-    text: "Claude reviews the ticket's scope first and posts a plan report, then migrates it. Jira moves to Dev In Progress once the plan is a go.", facts: runFacts(), pick: "run"}),
+    text: `Claude reviews the ticket's scope first and posts a plan report, then migrates it. Jira moves to ${ST().dev} once the plan is a go.`, facts: runFacts(), pick: "run"}),
   fix: (key) => ({kicker: "Fix review feedback", title: "Fix now?", key, ok: "Fix now",
     text: "Claude fixes the newest reviewer feedback on the PR branch, re-reviews the change and pushes it.", facts: runFacts(), pick: "fix"}),
   review: (key) => ({kicker: "Report-only review", title: "Review?", key, ok: "Review",
@@ -783,7 +799,7 @@ function chatHtml(msgs) {
       return `<div class="c-sys"><span class="ic">${esc(ic)}</span><span class="tx">${mrkdwn(m.text.slice(ic === "•" ? 0 : ic.length).trim())}</span><span class="when">${hhmm(m.time)}</span></div>`;
     }
     const choose = m === last && decision ? `<button class="primary c-choose" data-decide="${esc(m.ts)}">Choose an option…</button>` : "";
-    const report = /\bis (fixed|migrated|reviewed)\b|could not be|no-go/.test((m.text.split("\n")[0] || ""));
+    const report = reportRe().test((m.text.split("\n")[0] || ""));
     return `<div class="c-row"><img class="c-avatar" src="/avatar.png" alt=""><div class="c-msg${report ? " report" : ""}"><div class="c-head"><b>${esc(m.who)}</b>${
       report ? '<span class="tag">Report</span>' : ""}<span class="when">${hhmm(m.time)}</span></div>
       ${long(mrkdwn(m.text), m.text)}${files}${choose}</div></div>`;

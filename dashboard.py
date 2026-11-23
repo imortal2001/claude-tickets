@@ -25,11 +25,13 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import workflow as WF
 import workspace as W
 
 # The bridge live-reloads this module; reload its settings with it, so the module and its settings never come from
 # different versions (watch.py shares this same module object).
 importlib.reload(W)
+importlib.reload(WF)
 
 PORT = 8790
 HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -428,11 +430,11 @@ def state() -> dict:
         if owners and key not in owners:
             related = {**rthread, "owner": owners[0]}
             rthread = None
-        ttl = THREAD_TTL_ACTIVE if info.get("status") in ("In Review", "Dev In Progress") else THREAD_TTL_OTHER
+        ttl = THREAD_TTL_ACTIVE if info.get("status") in WF.ACTIVE else THREAD_TTL_OTHER
         rturn = review_turn(rthread, ttl)
         checking = w["running"] and key in w["keys"]   # the watch started for this reply is still reading it
         unchecked = bool(
-            not fb_open and rturn and not rturn["owner_last"] and info.get("status") in ("In Review", "Dev In Progress")
+            not fb_open and rturn and not rturn["owner_last"] and info.get("status") in WF.ACTIVE
             and (tsnum(rturn["ts"]) > watch_at or checking) and tsnum(rturn["ts"]) > tsnum(fb_ts or "0")
             and not running and not queued
             and not any(r.get("mode") == "fix" and tsnum(r["thread_ts"]) > tsnum(rturn["ts"]) for r in runs))
@@ -504,7 +506,7 @@ def state() -> dict:
     seen_age = time.time() - b.SEEN_FILE.stat().st_mtime if b.SEEN_FILE.exists() else None
     return {
         "now": time.time(),
-        "cfg": W.PUBLIC,
+        "cfg": {**W.PUBLIC, **WF.PUBLIC},
         "tickets": tickets,
         "running": {"key": cur.get("key"), "kind": cur.get("kind"), "since": cur.get("since"),
                     "model": cur.get("model"), "effort": cur.get("effort")},
@@ -554,7 +556,8 @@ def log_lines(path: Path, offset: int) -> tuple[list[dict], int]:
 
 # ---------- actions (same paths as the Slack commands) ----------
 
-WAITING = {"you": "you", W.REVIEWER.lower(): W.REVIEWER_OPTION, "new api": "new_api_(blocked)", "not started": "not_started", "skip": "skip"}
+WAITING = {"you": WF.LIST_WAITING["you"], W.REVIEWER.lower(): W.REVIEWER_OPTION, "new api": WF.LIST_WAITING["new_api"],
+           "not started": WF.LIST_WAITING["not_started"], "skip": WF.LIST_WAITING["skip"]}
 
 
 def table_update(key: str, waiting: str | None = None, next_text: str | None = None) -> str:
@@ -585,9 +588,9 @@ def plan_to_table(key: str, text: str) -> None:
     if "plan*" not in first and " plan" not in first:
         return
     nxt = next((re.sub(r"^\*?Next:\*?\s*", "", l).strip() for l in text.splitlines() if re.match(r"^\*?Next:", l.strip())), "")
-    if re.search(r"no-go:\s*needs a new API", first, re.I):
+    if re.search(r"no-go:\s*" + re.escape(WF.PLAN_NO_API), first, re.I):
         waiting = WAITING["new api"]
-    elif re.search(r"—\s*go\b", first):
+    elif re.search(re.escape(WF.PLAN_GO).replace("\\ ", r"\s*") + r"\b", first):
         waiting = WAITING["you"]
     else:
         return
@@ -604,13 +607,13 @@ def fix_next_step(text: str) -> str | None:
     if not lines:
         return None
     day = time.strftime("%m-%d")
-    if " could not be fixed" in lines[0]:
-        return f"Fix stopped {day}: " + lines[0].split(" could not be fixed", 1)[1].lstrip(": ").strip()
-    if " is fixed" not in lines[0]:
+    if WF.NOT_FIXED in lines[0]:
+        return f"Fix stopped {day}: " + lines[0].split(WF.NOT_FIXED, 1)[1].lstrip(": ").strip()
+    if WF.FIXED not in lines[0]:
         return None
-    status = next((l for l in lines if l.startswith("Status:")), "")
-    stg = next((l for l in lines if l.startswith("Staging PR:")), "")
-    jira = "In Review" if re.search(r"→\s*In Review\s*$", status) else (status.replace("Status:", "Jira").strip() or "Jira unchanged")
+    status = next((l for l in lines if l.startswith(WF.STATUS_LINE)), "")
+    stg = next((l for l in lines if l.startswith(WF.STAGING_LINE)), "")
+    jira = WF.REVIEW if re.search(r"→\s*" + re.escape(WF.REVIEW) + r"\s*$", status) else (status.replace(WF.STATUS_LINE, "Jira").strip() or "Jira unchanged")
     m = re.search(r"/pull/(\d+)", stg)
     if m:
         return f"Fixed {day} · {jira} · stg PR #{m.group(1)} ready — merge + deploy, then reply in the thread"
@@ -900,7 +903,7 @@ def run_report(run: dict | None) -> dict | None:
                 and not m["text"].startswith(("🛠", "▶", "⏹", "ℹ️", "🗜", "📎", "✓"))]
         # The run's final report, not a later chat answer (owner 2026-11-19): the last message that reads as one.
         final = next((m for m in reversed(mine) if re.search(
-            r"\b(is (migrated|fixed|reviewed)|could not be (fixed|migrated)|no-go)\b", (m["text"].splitlines() or [""])[0])), None)
+            WF.REPORT_RE, (m["text"].splitlines() or [""])[0])), None)
         last = final or (mine[-1] if mine else None)
         return last["text"] if last else None
     text = cached(f"report:{ts}", 60, fetch)
@@ -1176,7 +1179,7 @@ def on_job_finished(client=None, key: str = "", kind: str = "", mode: str = "", 
     first = (text or "").splitlines()[0] if text else ""
     # A migrate thread's later turns (Resume →, auto-resume, a reply) reach here as mode "reply" — the thread has no mode
     # of its own — so they count too (NJ-101597 finished through Resume → and its parent was skipped, 2026-11-17).
-    if mode in ("start", "migrate", "reply", None, "") and kind in ("start", "reply") and " is migrated" in first and KEY_RE.match(key):
+    if mode in ("start", "migrate", "reply", None, "") and kind in ("start", "reply") and WF.MIGRATED in first and KEY_RE.match(key):
         # A failure here says so in the run's chat (NJ-102794, 2026-11-20: the reply crashed and only launchd.err.log knew).
         try:
             review_ts = post_review_parent(client, key, thread_ts)
@@ -1203,22 +1206,22 @@ def on_job_finished(client=None, key: str = "", kind: str = "", mode: str = "", 
     # Review → (owner decision 2026-11-16): Jira stays In Review; when the review has findings, it goes back to
     # Dev In Progress so the board shows there is work again.
     what = ""
-    if kind == "review" and KEY_RE.match(key) and " is reviewed" in first and not re.search(r"is reviewed:\s*clean", first, re.I):
+    if kind == "review" and KEY_RE.match(key) and WF.REVIEWED in first and not WF.CLEAN_RE.search(first):
         try:
-            what = jira_move(key, "Dev In Progress", only_from="In Review")
+            what = jira_move(key, WF.DEV, only_from=WF.REVIEW)
         except Exception as exc:
             b.log.exception("jira move after review failed for %s", key)
             what = f"could not be changed ({type(exc).__name__}) — move it by hand"
         b.log.info("review of %s had findings: Jira %s", key, what)
         b.post(client, thread_ts, f"Jira: {what} — the review found something to fix.")
     # A finished review updates the ticket table too (owner request 2026-11-17).
-    if kind == "review" and KEY_RE.match(key or "") and " is reviewed" in first:
+    if kind == "review" and KEY_RE.match(key or "") and WF.REVIEWED in first:
         day = time.strftime("%m-%d")
-        if re.search(r"is reviewed:\s*clean", first, re.I):
-            waiting, nxt = W.REVIEWER_OPTION, f"Reviewed {day}: clean — still In Review, waiting for the reviewer"
+        if WF.CLEAN_RE.search(first):
+            waiting, nxt = W.REVIEWER_OPTION, f"Reviewed {day}: clean — still {WF.REVIEW}, waiting for the reviewer"
         else:
-            found = first.split(" is reviewed:", 1)[-1].strip() or "findings"
-            jira = " · Jira back to Dev In Progress" if what.startswith("moved") or what.startswith("already Dev") else ""
+            found = first.split(WF.REVIEWED + ":", 1)[-1].strip() or "findings"
+            jira = f" · Jira back to {WF.DEV}" if what.startswith("moved") or what.startswith(f"already {WF.DEV}") else ""
             waiting, nxt = WAITING["you"], f"Reviewed {day}: {found}{jira} — answer \"fix them now\" or \"leave it\" in the chat"
         try:
             res = table_update(key, waiting, nxt)
@@ -1281,11 +1284,7 @@ def bot_avatar() -> bytes:
 
 LIST_ID = W.LIST_ID
 COLS = W.LIST_COLUMNS
-LABELS = {"open": "OPEN", "dev_in_progress": "Dev In Progress", "in_review": "In Review", "blocked": "Blocked",
-          "for_release": "For Release", "frontend": "Frontend", "middleware": "Middleware", "api": "API",
-          "legacy": "Legacy", "next_js": "Next.js", "nextjs": "Next.js", "no_pr": "No PR", "mergeable": "Mergeable",
-          "conflicts": "Conflicts", "checking": "Checking", "you": "You", W.REVIEWER_OPTION: W.REVIEWER,
-          "new_api_blocked": "New API (blocked)", "not_started": "Not started", "skip": "Skip"}
+LABELS = {**WF.LIST_LABELS, W.REVIEWER_OPTION: W.REVIEWER}   # the List's option keys -> labels shown
 
 
 def _rich(field: dict) -> tuple[str, str]:

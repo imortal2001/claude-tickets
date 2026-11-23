@@ -1,0 +1,71 @@
+{
+  "jira": {
+    "jql": "assignee = currentUser() AND statusCategory != Done",
+    "statuses": {
+      "open": "To Do",
+      "dev": "In Progress",
+      "review": "In Review",
+      "blocked": "Blocked",
+      "released": "Done"
+    },
+    "status_aliases": {},
+    "board_order": [
+      "dev",
+      "review",
+      "open",
+      "blocked"
+    ],
+    "watch_issue_types": []
+  },
+  "reports": {
+    "migrated": "is migrated",
+    "fixed": "is fixed",
+    "reviewed": "is reviewed",
+    "reviewed_clean": "is reviewed: clean",
+    "not_fixed": "could not be fixed",
+    "not_done": [
+      "could not be fixed",
+      "could not be migrated",
+      "no-go"
+    ],
+    "status_line": "Status:",
+    "staging_line": "Staging PR:",
+    "plan_go": "— go",
+    "plan_no_api": "needs a new API"
+  },
+  "hide": {
+    "marker": "",
+    "label": "hidden tickets"
+  },
+  "list_options": {
+    "status": {
+      "open": "open",
+      "dev": "dev_in_progress",
+      "review": "in_review",
+      "blocked": "blocked",
+      "released": "for_release"
+    },
+    "waiting": {
+      "you": "you",
+      "new_api": "new_api_(blocked)",
+      "not_started": "not_started",
+      "skip": "skip"
+    },
+    "labels": {
+      "open": "To Do",
+      "dev_in_progress": "In Progress",
+      "in_review": "In Review",
+      "blocked": "Blocked",
+      "for_release": "Done",
+      "no_pr": "No PR",
+      "mergeable": "Mergeable",
+      "conflicts": "Conflicts",
+      "checking": "Checking",
+      "you": "You",
+      "new_api_blocked": "New API (blocked)",
+      "not_started": "Not started",
+      "skip": "Skip"
+    }
+  },
+  "_help": "Your team's workflow. statuses: your Jira status names for each role the app knows. reports: the words your runbook tells runs to start their final report with. list_options: your Slack List's option keys (its Status / Waiting on columns) and the labels the app shows. hide.marker: tickets whose summary contains it get a 'Hide …' toggle; empty = none."
+}

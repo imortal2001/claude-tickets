@@ -1567,10 +1567,10 @@ section.wait { --edge: var(--info); }
   background: color-mix(in srgb, var(--edge, transparent) 80%, transparent);
 }
 /* By Jira status groups get the same bar, in their status colour (owner 2026-11-20: every section alike) */
-#sec-jira-Dev-In-Progress { --edge: var(--warn); }
-#sec-jira-In-Review { --edge: var(--info); }
-#sec-jira-OPEN { --edge: var(--faint); }
-#sec-jira-Blocked { --edge: var(--bad); }
+#sec-jira-dev { --edge: var(--warn); }
+#sec-jira-review { --edge: var(--info); }
+#sec-jira-open { --edge: var(--faint); }
+#sec-jira-blocked { --edge: var(--bad); }
 #sec-jira-Other { --edge: var(--muted); }
 #list section .card { border-color: color-mix(in srgb, var(--edge, var(--muted)) 22%, var(--line)); padding-left: 18px; }
 #list section.live .card { border-color: color-mix(in srgb, var(--edge) 32%, var(--line)); }
