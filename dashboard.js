@@ -435,7 +435,9 @@ function sidebar() {
   const bad = withPr.filter(conflicted).length, pct = withPr.length ? Math.round(ok / withPr.length * 100) : 0;
   $("cnt-board").textContent = c.live.length + c.waiting.length + c.toReply.length + c.waitingReview.length || "";
   $("cnt-table").textContent = rows.length;
-  // One line per status, in board order (owner 2026-11-20); a click jumps to that section on the board.
+  // One line per status, in board order (owner 2026-11-20); a click jumps to that section on the board. The review
+  // status has no line (owner 2026-11-24): its tickets are all in the sections above, under Waiting for review at
+  // the least. Like "Other", it shows only if a ticket ever lands there.
   const rest = rows.filter((t) => !c.isLive(t) && !t.feedback.open && !c.replyDue(t) && !c.reviewWait(t));
   const jiraCount = (st) => rest.filter((t) => (ORDER.includes(t.status) ? t.status : "Other") === st).length;
   const line = (sec, color, label, n, pulse) => `<button type="button" class="qline${n ? "" : " zero"}" data-goto-sec="${sec}">
@@ -446,7 +448,7 @@ function sidebar() {
     line("sec-done", "var(--ok)", "Reply needed", c.toReply.length)}${
     line("sec-wait", "var(--info)", "Waiting for review", c.waitingReview.length)}</div>
     <div class="qsub">By Jira status</div><div class="qlist">${
-    [...ORDER, "Other"].map((st) => [st, jiraCount(st)]).filter(([st, n]) => n || st !== "Other")
+    [...ORDER, "Other"].map((st) => [st, jiraCount(st)]).filter(([st, n]) => n || (st !== "Other" && st !== ST().review))
       .map(([st, n]) => line(jiraSecId(st), st === ST().blocked ? "var(--bad)" : st === ST().open ? "var(--faint)" : "var(--muted)", st, n)).join("")}</div>
     <div class="qlist qfoot">${line("", "var(--bad)", "Merge conflicts", bad)}</div>
     <div class="ratio"><span>Mergeable ratio</span><i>${pct}% (${ok}/${withPr.length})</i></div>
