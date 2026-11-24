@@ -45,8 +45,11 @@ WATCH_STATUSES = WF.ACTIVE
 
 # What counts as feedback (runbook step 3): "Please review the feedback…", an attached <KEY>.html report,
 # a PR-comment or artifact link, "please fix conflict". "I merged the PR into main" and the like are not.
+# "Fix the / this / these (merge) conflict(s)" counts even when short or followed by "then I'll merge" (owner
+# 2026-11-24): this list is read before the approval / short-message rules.
 FEEDBACK_RE = re.compile(
-    r"review the feedback|please (?:fix|change|update|check (?:the|my) (?:comment|review))|fix (?:the )?conflict"
+    r"review the feedback|please (?:fix|change|update|check (?:the|my) (?:comment|review))"
+    r"|\bfix (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?"
     r"|could you (?:please )?(?:change|fix|update|revise)|pull/\d+#(?:discussion|pullrequestreview|issuecomment)"
     r"|/artifact/|修正|指摘", re.I)
 # The bare word "feedback" decides nothing on its own: "Thanks for fixing the feedback, LGTM" is an approval
