@@ -1,6 +1,8 @@
 // Claude Tickets — the dashboard's script (served at /dashboard.js). Loaded at the end of <body>.
 // The team's workflow, from workflow.json via /api/state (applyWorkflow): Jira status names by role, the board's order.
 let ORDER = [], STATUS_RANK = {}, STATUS_TONE = {}, REPORT_RE = /(?!)/;
+// Board sections the owner collapsed, by section id (owner 2026-11-24). Remembered in this browser only.
+const COLLAPSED = new Set((() => { try { return JSON.parse(localStorage.getItem("ct-collapsed") || "[]"); } catch (e) { return []; } })());
 const ST = () => CFG.status || {};
 const roleOf = (status) => Object.keys(ST()).find((role) => ST()[role] === status);
 // The board section of a Jira status, named by role so the CSS edge colours work for any team's status names.
@@ -23,6 +25,7 @@ const IC = {
   alert: svg('<path d="M8 4.2v4.6" /><circle cx="8" cy="11.4" r=".9" fill="currentColor" stroke="none"/>'),
   check: svg('<path d="M3.6 8.3l2.9 2.9 5.9-6.2" />'),
   clock: svg('<circle cx="8" cy="8" r="5.6" /><path d="M8 4.9V8l2.2 1.5" />'),
+  chevron: svg('<path d="M4.5 6.2 8 9.8l3.5-3.6" />'),
   hourglass: svg('<path d="M4.5 2.6h7M4.5 13.4h7M5.2 2.6c0 3 5.6 2.8 5.6 5.4S5.2 10.4 5.2 13.4M10.8 2.6c0 1.2-.8 2-1.8 2.6M10.8 13.4c0-3-5.6-2.8-5.6-5.4" />'),
   arrow: svg('<path d="M3.5 8h8.5M8.8 4.7L12.1 8l-3.3 3.3" />'),
   play: svg('<path d="M5.4 3.8v8.4L12 8z" fill="currentColor" stroke="none"/>'),
@@ -437,15 +440,30 @@ function sidebar() {
     <div class="ratio"><span>Mergeable ratio</span><i>${pct}% (${ok}/${withPr.length})</i></div>
     <div class="bar" role="img" aria-label="${ok} of ${withPr.length} PRs mergeable"><span style="width:${pct}%;background:var(--ok)"></span><span style="width:${withPr.length ? bad / withPr.length * 100 : 0}%;background:var(--bad)"></span></div>`;
 }
+function setCollapsed(id, on) {
+  if (on === COLLAPSED.has(id)) return;
+  on ? COLLAPSED.add(id) : COLLAPSED.delete(id);
+  try { localStorage.setItem("ct-collapsed", JSON.stringify([...COLLAPSED])); } catch (e) {}
+  const sec = $(id), btn = sec && sec.querySelector("h2 .collapse");   // no redraw: just this section
+  if (sec) sec.classList.toggle("collapsed", on);
+  if (btn) {
+    btn.setAttribute("aria-expanded", String(!on));
+    btn.title = on ? "Expand" : "Collapse";
+    btn.setAttribute("aria-label", btn.getAttribute("aria-label").replace(/^(Expand|Collapse)/, btn.title));
+  }
+}
 document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("[data-collapse]");
+  if (t) { setCollapsed(t.dataset.collapse, !COLLAPSED.has(t.dataset.collapse)); return; }
   const q = ev.target.closest("[data-goto-sec]");
   if (q && q.dataset.gotoSec) {
-    const go = () => { const el = $(q.dataset.gotoSec); if (el) el.scrollIntoView({block: "start", behavior: "smooth"}); };
+    const go = () => { setCollapsed(q.dataset.gotoSec, false); const el = $(q.dataset.gotoSec); if (el) el.scrollIntoView({block: "start", behavior: "smooth"}); };
     if (tab !== "board") { setTab("board"); setTimeout(go, 50); } else go();   // setTab also moves the menu highlight
     return;
   }
   const g = ev.target.closest("[data-goto]");
-  if (g) { const el = document.querySelector(`.card[data-key="${g.dataset.goto}"]`); if (el) { el.scrollIntoView({block: "center", behavior: "smooth"}); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200); } }
+  if (g) { const el = document.querySelector(`.card[data-key="${g.dataset.goto}"]`); if (el && el.closest("section.collapsed")) setCollapsed(el.closest("section").id, false);
+    if (el) { el.scrollIntoView({block: "center", behavior: "smooth"}); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1200); } }
 });
 document.addEventListener("keydown", (ev) => {
   if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") { ev.preventDefault(); $("q").focus(); $("q").select(); }
@@ -471,11 +489,17 @@ function renderView() {
   const groups = {};
   for (const t of rows.filter((x) => !isLive(x) && !x.feedback.open && !replyDue(x) && !reviewWait(x))) (groups[ORDER.includes(t.status) ? t.status : "Other"] ||= []).push(t);
   const names = [...ORDER, "Other"].filter((g) => groups[g]);
-  const head = (ico, title, n) => `<h2>${ico}${esc(title)} <span class="n">${n}</span></h2>`;
+  // The chevron at the right end of a section's header collapses it to that header (owner 2026-11-24).
+  // While the filter box has text, every section shows its matches, collapsed or not.
+  const isFolded = (id) => COLLAPSED.has(id) && !$("q").value.trim();
+  const head = (ico, title, n, id) => `<h2>${ico}${esc(title)} <span class="n">${n}</span><button type="button" class="collapse"
+    data-collapse="${esc(id)}" aria-expanded="${!isFolded(id)}" title="${isFolded(id) ? "Expand" : "Collapse"}"
+    aria-label="${isFolded(id) ? "Expand" : "Collapse"} ${esc(title)}">${IC.chevron}</button></h2>`;
+  const secCls = (id) => (isFolded(id) ? " collapsed" : "");
   // Every section has the same two states (owner 2026-11-20): empty = one compact dashed row with its message
   // (In progress adds "Queue next"), otherwise its header and cards.
   const section = (cls, id, ico, title, items, emptyText, extra = "") => items.length
-    ? `<section class="${cls}" id="${id}">${head(ico, title, items.length)}${items.map(card).join("")}</section>`
+    ? `<section class="${cls}${secCls(id)}" id="${id}">${head(ico, title, items.length, id)}${items.map(card).join("")}</section>`
     : `<section class="${cls} empty-sec" id="${id}"><h2>${ico}${esc(title)} <span class="n">0</span><span class="idle">· ${esc(emptyText)}</span>${extra}</h2></section>`;
   const nextUp = waiting[0] || toReply[0];
   const queueNext = !live.length && nextUp
@@ -490,7 +514,7 @@ function renderView() {
     "Nothing is waiting on the reviewer.");
   const jira = names.length
     ? '<div class="jira-label">By Jira status</div>' +
-      names.map((g) => `<section id="${esc(jiraSecId(g))}">${head("", g, groups[g].length)}${groups[g].sort((a, b) => a.key.localeCompare(b.key)).map(card).join("")}</section>`).join("")
+      names.map((g) => `<section id="${esc(jiraSecId(g))}" class="${secCls(jiraSecId(g)).trim()}">${head("", g, groups[g].length, jiraSecId(g))}${groups[g].sort((a, b) => a.key.localeCompare(b.key)).map(card).join("")}</section>`).join("")
     : "";
   const anchor = listAnchor();
   $("list").innerHTML = liveSection + fbSection + doneSection + waitSection +
