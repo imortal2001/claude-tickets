@@ -351,19 +351,23 @@ def set_run_settings(body: dict) -> tuple[bool, str]:
 
 def _watch_state() -> dict:
     # Kept on the bridge module so it survives this file's live reloads.
-    return b.__dict__.setdefault("_dash_watch", {"running": False, "keys": set(), "next_ok": 0.0})
+    return b.__dict__.setdefault("_dash_watch", {"running": False, "keys": set(), "next_ok": 0.0,
+                                                 "lock": threading.Lock()})
 
 
 def trigger_watch(keys: list[str]) -> None:
     """A reviewer reply the watch has not seen starts the feedback watch now, not at the top of the hour (owner
-    request 2026-11-17). One at a time; none while the hourly run is going; a failed run backs off 10 minutes and
-    puts the watch stamp back, so the reply still counts as not checked."""
+    request 2026-11-17). One at a time. A run that did not happen (another check held the lock) or failed puts the
+    watch stamp back, so the reply still counts as not checked, and is retried in 30 s or 10 minutes. A finished run
+    allows the next one at once: a reply posted while it was reading is newer than its stamp and starts another
+    (owner 2026-11-24: NJ-101037's reply came 13 s into a watch and waited behind a 2-minute gap)."""
     w = _watch_state()
-    if w["running"] or time.time() < w["next_ok"]:
-        return
-    if subprocess.run(["pgrep", "-f", "[f]eedback-watch"], capture_output=True).returncode == 0:
-        return
-    w.update(running=True, keys=set(keys), next_ok=time.time() + 120)
+    with w.setdefault("lock", threading.Lock()):   # board polls and the bridge's 10 s check call this together
+        if w["running"] or time.time() < w["next_ok"]:
+            return
+        if subprocess.run(["pgrep", "-f", "[f]eedback-watch"], capture_output=True).returncode == 0:
+            return
+        w.update(running=True, keys=set(keys))
 
     def go():
         prev = b.WATCH_STAMP.read_text() if b.WATCH_STAMP.exists() else None
@@ -376,11 +380,10 @@ def trigger_watch(keys: list[str]) -> None:
         except Exception:
             b.log.exception("triggered feedback watch failed")
         finally:
-            if not ok:
-                if prev is not None:
-                    b.WATCH_STAMP.write_text(prev)
-                w["next_ok"] = time.time() + 600
-            w.update(running=False, keys=set())
+            ran = ok and text != getattr(b._watch(), "BUSY", None)
+            if not ran and prev is not None:
+                b.WATCH_STAMP.write_text(prev)
+            w.update(running=False, keys=set(), next_ok=0.0 if ran else time.time() + (30 if ok else 600))
 
     threading.Thread(target=go, daemon=True, name="feedback-watch-now").start()
 

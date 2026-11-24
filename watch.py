@@ -587,11 +587,14 @@ def _check_ticket(key: str, rows: dict, colids: dict, dry: bool, found: list) ->
     return True
 
 
+BUSY = "Another check is running."   # feedback_watch's answer when it did not run: the caller keeps its stamp back
+
+
 def feedback_watch(dry: bool = False) -> tuple[bool, str]:
     """Runbook "MODE: hourly FEEDBACK WATCH": report new reviewer feedback once, keep feedback_open current,
     then sync the table. Returns (ok, summary line)."""
     if not dry and not take_lock():
-        return True, "Another check is running."
+        return True, BUSY
     try:
         # A fresh look at the channel: a thread posted since the cached index was built (up to 5 minutes ago) would
         # otherwise go unread, and its reply would then count as checked (owner 2026-11-24, NJ-102235).
