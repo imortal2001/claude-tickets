@@ -593,6 +593,13 @@ def feedback_watch(dry: bool = False) -> tuple[bool, str]:
     if not dry and not take_lock():
         return True, "Another check is running."
     try:
+        # A fresh look at the channel: a thread posted since the cached index was built (up to 5 minutes ago) would
+        # otherwise go unread, and its reply would then count as checked (owner 2026-11-24, NJ-102235).
+        try:
+            with _index_lock:
+                _build_thread_index()
+        except Exception:   # review_thread() falls back to the cache and says so
+            b.log.warning("thread index not rebuilt for this watch", exc_info=True)
         tickets = jira_tickets()
         rows, colids = list_rows()
         found, errors = [], []
