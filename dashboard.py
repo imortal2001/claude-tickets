@@ -270,13 +270,15 @@ def mark_thread_stale(channel: str, ts: str) -> None:
 
 
 def owner_replied_since(thread: dict | None, epoch: float, ttl: float = THREAD_TTL_OTHER) -> bool | None:
-    """Has the owner posted in the ticket's review thread after `epoch`? None when the thread can't be read."""
+    """Has the owner posted in the ticket's review thread after `epoch`? None when the thread can't be read, or when
+    someone else started it after `epoch`: the reply was due in an earlier thread, which this one can't tell."""
     if not thread:
         return None
     data = thread_cached(thread, ttl)
-    if data.get("error"):
+    msgs = data.get("messages") or []
+    if data.get("error") or (msgs and not msgs[0].get("mine") and float(msgs[0]["ts"]) > epoch):
         return None
-    return any(m.get("mine") and float(m["ts"]) > epoch for m in data.get("messages") or [])
+    return any(m.get("mine") and float(m["ts"]) > epoch for m in msgs)
 
 
 def review_turn(thread: dict | None, ttl: float = THREAD_TTL_OTHER) -> dict | None:
@@ -289,6 +291,13 @@ def review_turn(thread: dict | None, ttl: float = THREAD_TTL_OTHER) -> dict | No
         return None
     last = msgs[-1]
     return {"owner_last": bool(last.get("mine")), "ts": last["ts"], "time": last.get("time")}
+
+
+def _no_turn_yet(thread: dict, ttl: float) -> bool:
+    """The thread can't be read, or it is only a parent someone else posted (no reply yet)."""
+    data = thread_cached(thread, ttl)
+    msgs = data.get("messages") or []
+    return bool(data.get("error")) or (len(msgs) == 1 and not msgs[0].get("mine"))
 
 
 SENT_RE = re.compile(r"Sent for review (\d{2})-(\d{2}) (\d{1,2}):(\d{2})")
@@ -419,6 +428,7 @@ def state() -> dict:
     except Exception:
         b.log.warning("thread owners unavailable this refresh", exc_info=True)
         thread_owners_of = lambda ts: []
+    channel_threads = None   # {KEY: parent ts} in the review channel, read once (the watch caches it for 5 minutes)
     w = _watch_state()
     for key, info in seen.items():
         runs = sorted(runs_by_key.get(key, []), key=lambda r: tsnum(r["thread_ts"]), reverse=True)
@@ -446,6 +456,18 @@ def state() -> dict:
         # earlier review channel is not this ticket's thread any more: the channel moved on 2026-11-24).
         threads = [th for th in ((steps.get(key) or {}).get("thread"), (auto.get(key) or {}).get("review_thread")) if th]
         rthread = next((th for th in threads if th.get("channel") == REVIEW_CHANNEL), None)
+        if not rthread and info.get("status") in WF.ACTIVE:
+            # None recorded here: a thread someone else started in this channel with the ticket's link (owner
+            # 2026-11-24: the reviewer re-posted the tickets in the new channel and gave feedback there).
+            if channel_threads is None:
+                try:
+                    channel_threads = b._watch().thread_index() if hasattr(b, "_watch") else {}
+                except Exception:
+                    b.log.warning("thread index unavailable this refresh", exc_info=True)
+                    channel_threads = {}
+            if channel_threads.get(key):
+                rthread = {"channel": REVIEW_CHANNEL, "ts": channel_threads[key]}
+                remember_review_thread(key, rthread["ts"])
         old_thread = bool(threads) and not rthread   # its thread is in an earlier review channel: replies there are unknown
         # Another ticket's thread (its Jira link starts it) is shown as related, never used as this ticket's own
         # review thread for feedback, waits or replies (owner 2026-11-20: NJ-102761 had NJ-102617's thread).
@@ -456,9 +478,10 @@ def state() -> dict:
             rthread = None
         ttl = THREAD_TTL_ACTIVE if info.get("status") in WF.ACTIVE else THREAD_TTL_OTHER
         rturn = review_turn(rthread, ttl)
-        # No thread, or one that can't be read: the List still says when it was sent. (A readable thread with only its
-        # parent has no turn yet, and an older round's List time would be wrong for it.)
-        if rturn is None and info.get("status") == WF.REVIEW and (not rthread or thread_cached(rthread, ttl).get("error")):
+        # No thread, or one that can't be read: the List still says when it was sent. So does a thread the reviewer
+        # started with no reply yet (the earlier rounds are in an earlier channel). A thread the owner started with only
+        # its parent has no turn yet: an older round's List time would be wrong for it.
+        if rturn is None and info.get("status") == WF.REVIEW and (not rthread or _no_turn_yet(rthread, ttl)):
             rturn = list_review_turn((steps.get(key) or {}).get("next", ""))
         checking = w["running"] and key in w["keys"]   # the watch started for this reply is still reading it
         unchecked = bool(
