@@ -390,7 +390,7 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
   last did something), how long, and whether a note of yours is still queued, so a long wait doesn't look stuck.
 - **Otherwise:** it's a conversation about the ticket. A question gets an answer with evidence, not new work; if
   the answer shows a required step was skipped, Claude offers to do it ("Option 1 (recommended) …") and waits for
-  you. An instruction gets done, following the same runbook rules. It doesn't post to Slack itself. Ready-made prompts fill the box without sending: **What's left?**, **Status summary**
+  you. An instruction gets done, following the same runbook rules. It doesn't post to Slack itself. Ready-made prompts are sent as soon as you click them: **What's left?**, **Status summary**
   and **Explain the report**, plus **What conflicts?** and **Fix the conflict** when the ticket's PR has merge conflicts.
 
 ### Review thread

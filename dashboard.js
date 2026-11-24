@@ -76,7 +76,7 @@ function syncReplyHint() {
   $("qconflict").innerHTML = conflictPrompts(data.tickets.find((t) => t.key === key));
 }
 // A ticket whose PR has merge conflicts gets two more quick prompts, first in the row (owner request 2026-11-24):
-// a question (answered, nothing changed) and the fix. Like the others they fill the box; nothing is sent.
+// a question (answered, nothing changed) and the fix. Like the others they are sent on click.
 function conflictPrompts(t) {
   const prs = t ? [(t.pr || {}).main, ...((t.pr || {}).stg || [])].filter((p) => p && p.mergeable === "CONFLICTING") : [];
   if (!prs.length) return "";
@@ -889,10 +889,13 @@ function renderTabs() {
   el.innerHTML = tabs.join("");
   el.hidden = tabs.length < 2 && !convs.length;
 }
-$("quick").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-q]");
-  if (!b) return;
-  const ta = $("replytext"); ta.value = b.dataset.q; ta.focus(); ta.dispatchEvent(new Event("input"));   // filled, not sent
+// A quick prompt is sent on click (owner request 2026-11-24; it used to fill the box). Only in the chat with Claude,
+// never in the team thread, so no confirmation; one at a time, and what is typed in the box stays there.
+$("quick").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-q]"), q = $("quick");
+  if (!b || !threadRef || q.getAttribute("aria-busy") === "true") return;
+  q.setAttribute("aria-busy", "true");
+  try { await postReply(b.dataset.q); } finally { q.removeAttribute("aria-busy"); }
 });
 $("logbody").addEventListener("click", (e) => {
   const b = e.target.closest("[data-more]");
