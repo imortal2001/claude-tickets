@@ -797,8 +797,9 @@ def token_for(channel: str) -> str | None:
 
 
 def slack_get(token: str, method: str, **params) -> dict:
-    """A Slack Web API GET. A cut-off or failed read is retried twice (a 327 KB history page came back cut off
-    at 74 KB on 2026-11-17 and failed the feedback watch)."""
+    """A Slack Web API GET. A cut-off or failed read is retried twice, after 1 s and 2 s (a 327 KB history page came
+    back cut off at 74 KB on 2026-11-17 and failed the feedback watch; on 2026-11-24 the member list was cut off
+    three times back to back, so the retries now wait a moment)."""
     import http.client
     from urllib.parse import urlencode
     for attempt in range(3):
@@ -810,6 +811,7 @@ def slack_get(token: str, method: str, **params) -> dict:
         except (http.client.IncompleteRead, urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
             if attempt == 2:
                 raise
+            time.sleep(attempt + 1)
             time.sleep(1 + attempt * 2)
 
 

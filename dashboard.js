@@ -1020,12 +1020,15 @@ $("dsend").onclick = async () => {
 };
 
 // ---- @mentions (team review threads): Slack-style picker; "@Name" becomes <@ID> when sent
-let people = null, mentionMap = {}, pop = null;
+let people = null, peopleAt = 0, mentionMap = {}, pop = null;
 const clean = (s) => (s || "").replace(/[\u200b-\u200d\ufeff]/g, "").trim();
+// An empty list (the read failed, e.g. Slack cut the member list short on 2026-11-24) is asked for again after 30 s,
+// instead of leaving the picker empty until the window reloads.
 async function loadPeople() {
-  if (people) return people;
+  if (people && (people.length || Date.now() - peopleAt < 30000)) return people;
   try { const j = await (await fetch("/api/people", {cache: "no-store"})).json(); people = (j.people || []).map((p) => ({...p, name: clean(p.name), real: clean(p.real)})); }
   catch (e) { people = []; }
+  peopleAt = Date.now();
   return people;
 }
 // ---- :emoji: suggestions (owner 2026-11-20), Slack's names: in the review thread ":name:" is inserted (Slack shows it),
