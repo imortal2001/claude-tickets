@@ -1125,6 +1125,7 @@ dialog.confirm[open] { animation: cfIn .16s ease-out; }
   border-radius: 10px;
   background: var(--panel2);
 }
+.cf-pick[hidden] { display: none; }   /* only dialogs that start a run pick a model; "display: grid" beat [hidden] */
 .cf-pick label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .cf-pick select {
   padding: 6px 8px;
