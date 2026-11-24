@@ -350,19 +350,22 @@ def set_run_settings(body: dict) -> tuple[bool, str]:
 
 
 def _watch_state() -> dict:
-    # Kept on the bridge module so it survives this file's live reloads.
-    return b.__dict__.setdefault("_dash_watch", {"running": False, "keys": set(), "next_ok": 0.0,
-                                                 "lock": threading.Lock()})
+    # Kept on the bridge module so it survives this file's live reloads (a copy from before the lock gets one).
+    w = b.__dict__.setdefault("_dash_watch", {"running": False, "keys": set(), "next_ok": 0.0})
+    if "lock" not in w:
+        w.setdefault("lock", threading.Lock())
+    return w
 
 
 def trigger_watch(keys: list[str]) -> None:
     """A reviewer reply the watch has not seen starts the feedback watch now, not at the top of the hour (owner
     request 2026-11-17). One at a time. A run that did not happen (another check held the lock) or failed puts the
     watch stamp back, so the reply still counts as not checked, and is retried in 30 s or 10 minutes. A finished run
-    allows the next one at once: a reply posted while it was reading is newer than its stamp and starts another
-    (owner 2026-11-24: NJ-101037's reply came 13 s into a watch and waited behind a 2-minute gap)."""
+    allows the next one 15 s later: a reply posted while it was reading is newer than its stamp and starts another
+    (owner 2026-11-24: NJ-101037's reply came 13 s into a watch and waited behind a 2-minute gap). The 15 s keep a
+    Mac clock behind Slack's from starting back-to-back runs."""
     w = _watch_state()
-    with w.setdefault("lock", threading.Lock()):   # board polls and the bridge's 10 s check call this together
+    with w["lock"]:   # board polls and the bridge's 10 s check call this together
         if w["running"] or time.time() < w["next_ok"]:
             return
         if subprocess.run(["pgrep", "-f", "[f]eedback-watch"], capture_output=True).returncode == 0:
@@ -380,10 +383,11 @@ def trigger_watch(keys: list[str]) -> None:
         except Exception:
             b.log.exception("triggered feedback watch failed")
         finally:
-            ran = ok and text != getattr(b._watch(), "BUSY", None)
+            busy = text == getattr(sys.modules.get("watch"), "BUSY", None)   # no reload here: this must not raise
+            ran = ok and not busy
             if not ran and prev is not None:
                 b.WATCH_STAMP.write_text(prev)
-            w.update(running=False, keys=set(), next_ok=0.0 if ran else time.time() + (30 if ok else 600))
+            w.update(running=False, keys=set(), next_ok=time.time() + (15 if ran else 30 if ok else 600))
 
     threading.Thread(target=go, daemon=True, name="feedback-watch-now").start()
 
@@ -797,9 +801,8 @@ def token_for(channel: str) -> str | None:
 
 
 def slack_get(token: str, method: str, **params) -> dict:
-    """A Slack Web API GET. A cut-off or failed read is retried twice, after 1 s and 2 s (a 327 KB history page came
-    back cut off at 74 KB on 2026-11-17 and failed the feedback watch; on 2026-11-24 the member list was cut off
-    three times back to back, so the retries now wait a moment)."""
+    """A Slack Web API GET. A cut-off or failed read is retried twice, after 1 s and 3 s (a 327 KB history page came
+    back cut off at 74 KB on 2026-11-17 and failed the feedback watch)."""
     import http.client
     from urllib.parse import urlencode
     for attempt in range(3):
@@ -811,7 +814,6 @@ def slack_get(token: str, method: str, **params) -> dict:
         except (http.client.IncompleteRead, urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
             if attempt == 2:
                 raise
-            time.sleep(attempt + 1)
             time.sleep(1 + attempt * 2)
 
 
@@ -1182,8 +1184,8 @@ def _pr_url(rec: dict, name: str) -> str | None:
         v = v.get("number")
     if rec.get(f"{name}_url"):
         return rec[f"{name}_url"]
-    if isinstance(v, str) and v.strip().startswith("https://"):   # {"stg_pr": "https://github.com/…/pull/2565"}
-        return v.strip()
+    if isinstance(v, str) and (m := PR_URL_RE.match(v.strip())):   # {"stg_pr": "https://github.com/…/pull/2565"}
+        return m.group(0)
     if isinstance(v, str) and v.strip().lstrip("#").isdigit():
         v = int(v.strip().lstrip("#"))
     return f"https://github.com/{W.GH_REPO}/pull/{v}" if type(v) is int and v > 0 else None

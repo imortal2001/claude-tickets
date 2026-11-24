@@ -853,19 +853,20 @@ def feedback_watch_loop(client) -> None:
                 t0 = time.time()
                 log.info("feedback watch started")
                 ok, text = run_feedback_watch()
+                log.info("feedback watch %s in %ss: %s", "finished" if ok else "FAILED", int(time.time() - t0),
+                         text[:200].replace("\n", " "))
                 if text == _watch().BUSY:   # it read nothing: replies since the last real run stay unchecked
                     if prev is not None:
                         WATCH_STAMP.write_text(prev)
-                    retry_at = time.time() + 60
-                log.info("feedback watch %s in %ss: %s", "finished" if ok else "FAILED", int(time.time() - t0),
-                         text[:200].replace("\n", " "))
-                if not ok and not failing:
-                    client.chat_postMessage(channel=CHANNEL, text=(
-                        "⚠️ The hourly review-feedback watch failed, so new feedback may not be reported.\n"
-                        f"`{text[:250]}`\nIt retries every hour; details in `{LOG}`."))
-                elif ok and failing:
-                    client.chat_postMessage(channel=CHANNEL, text="✅ The hourly review-feedback watch works again.")
-                failing = not ok
+                    retry_at = time.time() + 60   # and it is no success: the failure warning stays as it was
+                else:
+                    if not ok and not failing:
+                        client.chat_postMessage(channel=CHANNEL, text=(
+                            "⚠️ The hourly review-feedback watch failed, so new feedback may not be reported.\n"
+                            f"`{text[:250]}`\nIt retries every hour; details in `{LOG}`."))
+                    elif ok and failing:
+                        client.chat_postMessage(channel=CHANNEL, text="✅ The hourly review-feedback watch works again.")
+                    failing = not ok
         except Exception:
             log.exception("feedback watch loop error")
         # Every 10 seconds, every day, app open or closed (owner request 2026-11-17): a no-Claude look at the review

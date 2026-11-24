@@ -73,7 +73,8 @@ function syncReplyHint() {
   $("replytext").placeholder = working ? "Add info while Claude works — it gets it after its next step…" : "Reply to Claude…";
   $("replyhint").textContent = working ? "↩ to send · ⇧↩ new line · added to the running session without stopping it"
                                        : "↩ to send · ⇧↩ new line · continues this ticket's Claude session";
-  $("qconflict").innerHTML = conflictPrompts(data.tickets.find((t) => t.key === key));
+  const qc = conflictPrompts(data.tickets.find((t) => t.key === key)), el = $("qconflict");
+  if (el.dataset.sig !== qc) { el.dataset.sig = qc; el.innerHTML = qc; }   // a refresh never swaps a button mid-click
 }
 // A ticket whose PR has merge conflicts gets two more quick prompts, first in the row (owner request 2026-11-24):
 // a question (answered, nothing changed) and the fix. Like the others they are sent on click.
@@ -456,7 +457,7 @@ function setCollapsed(id, on) {
   on ? COLLAPSED.add(id) : COLLAPSED.delete(id);
   try { localStorage.setItem("ct-collapsed", JSON.stringify([...COLLAPSED])); } catch (e) {}
   const sec = $(id), btn = sec && sec.querySelector("h2 .collapse");   // no redraw: just this section
-  if (sec) sec.classList.toggle("collapsed", on);
+  if (sec) sec.classList.toggle("collapsed", on && !$("q").value.trim());   // as renderView: a search shows every match
   if (btn) {
     btn.setAttribute("aria-expanded", String(!on));
     btn.title = on ? "Expand" : "Collapse";
@@ -1020,16 +1021,18 @@ $("dsend").onclick = async () => {
 };
 
 // ---- @mentions (team review threads): Slack-style picker; "@Name" becomes <@ID> when sent
-let people = null, peopleAt = 0, mentionMap = {}, pop = null;
+let people = null, peopleAt = 0, peopleLoading = null, mentionMap = {}, pop = null;
 const clean = (s) => (s || "").replace(/[\u200b-\u200d\ufeff]/g, "").trim();
 // An empty list (the read failed, e.g. Slack cut the member list short on 2026-11-24) is asked for again after 30 s,
 // instead of leaving the picker empty until the window reloads.
-async function loadPeople() {
-  if (people && (people.length || Date.now() - peopleAt < 30000)) return people;
-  try { const j = await (await fetch("/api/people", {cache: "no-store"})).json(); people = (j.people || []).map((p) => ({...p, name: clean(p.name), real: clean(p.real)})); }
-  catch (e) { people = []; }
-  peopleAt = Date.now();
-  return people;
+function loadPeople() {
+  if (people && (people.length || Date.now() - peopleAt < 30000)) return Promise.resolve(people);
+  return peopleLoading ||= (async () => {   // keystrokes while it loads share this one request
+    try { const j = await (await fetch("/api/people", {cache: "no-store"})).json(); people = (j.people || []).map((p) => ({...p, name: clean(p.name), real: clean(p.real)})); }
+    catch (e) { people = []; }
+    peopleAt = Date.now(); peopleLoading = null;
+    return people;
+  })();
 }
 // ---- :emoji: suggestions (owner 2026-11-20), Slack's names: in the review thread ":name:" is inserted (Slack shows it),
 // in the chat with Claude the emoji itself.
