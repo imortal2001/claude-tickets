@@ -73,6 +73,17 @@ function syncReplyHint() {
   $("replytext").placeholder = working ? "Add info while Claude works — it gets it after its next step…" : "Reply to Claude…";
   $("replyhint").textContent = working ? "↩ to send · ⇧↩ new line · added to the running session without stopping it"
                                        : "↩ to send · ⇧↩ new line · continues this ticket's Claude session";
+  $("qconflict").innerHTML = conflictPrompts(data.tickets.find((t) => t.key === key));
+}
+// A ticket whose PR has merge conflicts gets two more quick prompts, first in the row (owner request 2026-11-24):
+// a question (answered, nothing changed) and the fix. Like the others they fill the box; nothing is sent.
+function conflictPrompts(t) {
+  const prs = t ? [(t.pr || {}).main, ...((t.pr || {}).stg || [])].filter((p) => p && p.mergeable === "CONFLICTING") : [];
+  if (!prs.length) return "";
+  const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
+  const ask = `${which} ${prs.length > 1 ? "have" : "has"} merge conflicts. Which files conflict, and why (what changed on the base branch)? Don't change anything yet; tell me how you would resolve them.`;
+  const fix = `Fix the merge conflicts in ${which}: merge the base branch into the PR branch (no rebase, no force-push), resolve them as the runbook says, re-run the checks for the files involved, and push. Then tell me what you resolved.`;
+  return `<button type="button" class="bad" data-q="${esc(ask)}">What conflicts?</button><button type="button" class="bad" data-q="${esc(fix)}">Fix the conflict</button>`;
 }
 function syncRunPick() {
   const s = data && data.run_settings;

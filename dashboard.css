@@ -1505,6 +1505,9 @@ section.collapsed .card { display: none; }
 .quick[hidden] { display: none; }
 .quick button { padding: 4px 10px; border-radius: 999px; font-size: 11.5px; color: var(--muted); background: var(--panel2); }
 .quick button:hover { color: var(--text); border-color: var(--accent); }
+.quick .qdyn { display: contents; }   /* its buttons sit in the row like the others */
+.quick button.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.quick button.bad:hover { color: var(--text); border-color: var(--bad); }
 .iconbtn {
   display: inline-grid;
   place-items: center;
