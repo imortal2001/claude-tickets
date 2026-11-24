@@ -261,7 +261,7 @@ def owns_thread(key: str, ts: str) -> bool:
 def review_thread(key: str, row: dict | None = None) -> str | None:
     """The ticket's thread in the review channel: state.json, the List's Thread cell, or the channel —
     never another ticket's thread (see owns_thread)."""
-    rec = (load_state().get("tickets", {}).get(key) or {}).get("review_thread")
+    rec = d.recorded_thread(key)   # only a thread in the current review channel
     if rec and owns_thread(key, rec["ts"]):
         return rec["ts"]
     if row:
@@ -465,7 +465,7 @@ def table_sync(dry: bool = False, tickets: dict | None = None) -> dict:
                 cells.append(_cell(colids, "next", rid, text=IN_REVIEW_NEXT))
         # Thread: fill "No thread yet" once the thread exists.
         t_text, t_url = d._rich(f.get(COLS["thread"]) or {})
-        if not t_url:
+        if not t_url or f"/archives/{REVIEW}/" not in t_url:   # none yet, or a link into an earlier review channel
             ts = review_thread(key, row)
             if ts:
                 cells.append(_cell(colids, "thread", rid, text=f"{key} thread", url=thread_link(ts)))

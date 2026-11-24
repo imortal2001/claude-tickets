@@ -442,7 +442,11 @@ def state() -> dict:
             r.get("mode") == "fix" and fb_ts and tsnum(r["thread_ts"]) > tsnum(fb_ts) for r in runs)
         # A reviewer message newer than the last watch run counts as feedback straight away, marked "not checked yet";
         # the next hourly watch confirms or clears it (owner request 2026-11-17).
-        rthread = (steps.get(key) or {}).get("thread") or (auto.get(key) or {}).get("review_thread")
+        # The List's Thread cell or the recorded thread, whichever is in the current review channel (a thread in an
+        # earlier review channel is not this ticket's thread any more: the channel moved on 2026-11-24).
+        threads = [th for th in ((steps.get(key) or {}).get("thread"), (auto.get(key) or {}).get("review_thread")) if th]
+        rthread = next((th for th in threads if th.get("channel") == REVIEW_CHANNEL), None)
+        old_thread = bool(threads) and not rthread   # its thread is in an earlier review channel: replies there are unknown
         # Another ticket's thread (its Jira link starts it) is shown as related, never used as this ticket's own
         # review thread for feedback, waits or replies (owner 2026-11-20: NJ-102761 had NJ-102617's thread).
         related = None
@@ -481,8 +485,8 @@ def state() -> dict:
             if done_at:
                 rt = rthread
                 # No thread known: "not replied" only when the ticket has no thread anywhere. If the table could not be
-                # read this time, say nothing rather than move the card (2026-11-19).
-                replied = owner_replied_since(rt, done_at, ttl) if rt else (None if not steps else False)
+                # read this time, or its thread is in an earlier review channel, say nothing rather than move the card.
+                replied = owner_replied_since(rt, done_at, ttl) if rt else (None if not steps or old_thread else False)
                 # A run the owner said needs no reply (e.g. only a merge conflict was fixed): state.json
                 # tickets.<KEY>.reply_waived_session names that run's session; a later run asks again.
                 waived = fb.get("reply_waived_session") and fb.get("reply_waived_session") == work.get("session_id")
@@ -1043,9 +1047,16 @@ def remember_review_thread(key: str, ts: str) -> None:
         p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def recorded_thread(key: str) -> dict | None:
+    """The ticket's recorded review thread, if it is in the current review channel. One recorded in another channel
+    belongs to an earlier review channel (it moved on 2026-11-24) and is not this ticket's thread here."""
+    rec = (read_json(_auto_state_path(), {}).get("tickets", {}).get(key) or {}).get("review_thread")
+    return rec if rec and rec.get("channel") == REVIEW_CHANNEL else None
+
+
 def find_review_thread(key: str) -> str | None:
     """The ticket's parent message in the review channel, if one exists (recorded, or in recent history)."""
-    rec = (read_json(_auto_state_path(), {}).get("tickets", {}).get(key) or {}).get("review_thread")
+    rec = recorded_thread(key)
     if rec:
         return rec["ts"]
     token = token_for(REVIEW_CHANNEL)
