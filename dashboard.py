@@ -1144,7 +1144,8 @@ PR_URL_RE = re.compile(r"https://github\.com/" + re.escape(W.GH_REPO) + r"/pull/
 
 def _pr_url(rec: dict, name: str) -> str | None:
     """A PR's URL from a state.json ticket record. Runs write it several ways: {"pr": {"url": …}}, {"pr": {"number": …}},
-    or {"pr": 2518, "pr_url": …} (NJ-102794, 2026-11-20: the bare number crashed the ready-for-review reply).
+    {"pr": 2518, "pr_url": …} (NJ-102794, 2026-11-20: the bare number crashed the ready-for-review reply), or the URL
+    itself as a string (NJ-102819).
     The runbook's empty shape {"number": 0, "url": ""} means "no PR", never /pull/0."""
     v = rec.get(name)
     if isinstance(v, dict):
@@ -1153,6 +1154,8 @@ def _pr_url(rec: dict, name: str) -> str | None:
         v = v.get("number")
     if rec.get(f"{name}_url"):
         return rec[f"{name}_url"]
+    if isinstance(v, str) and v.strip().startswith("https://"):   # {"stg_pr": "https://github.com/…/pull/2565"}
+        return v.strip()
     if isinstance(v, str) and v.strip().lstrip("#").isdigit():
         v = int(v.strip().lstrip("#"))
     return f"https://github.com/{W.GH_REPO}/pull/{v}" if type(v) is int and v > 0 else None
