@@ -1410,6 +1410,21 @@ section h2 .collapse {
 section h2 .collapse:hover { background: var(--chip); border-color: var(--line); color: var(--text); }
 section h2 .collapse .svgi { width: 14px; height: 14px; transition: transform .15s ease; }
 section.collapsed h2 { margin-bottom: 0; }
+/* the whole header row folds its section (owner 2026-11-25): a container that shows on hover; the side padding stays
+   the 15px of "section:not(.empty-sec) > h2", so the title lines up with the cards as before */
+section h2.foldable {
+  cursor: pointer;
+  user-select: none;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  margin-bottom: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: background .12s ease, border-color .12s ease;
+}
+section h2.foldable:hover { background: var(--chip); border-color: var(--line); }
+section h2.foldable:hover .collapse { color: var(--text); }
+section.collapsed h2.foldable { margin-bottom: 0; }
 section.collapsed h2 .collapse .svgi { transform: rotate(-90deg); }
 section.collapsed .card { display: none; }
 .details .i {

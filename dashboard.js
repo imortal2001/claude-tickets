@@ -527,11 +527,13 @@ function setCollapsed(id, on) {
     btn.setAttribute("aria-expanded", String(!on));
     btn.title = on ? "Expand" : "Collapse";
     btn.setAttribute("aria-label", btn.getAttribute("aria-label").replace(/^(Expand|Collapse)/, btn.title));
+    btn.closest("h2").title = btn.title;   // the header row's own tooltip
   }
 }
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("[data-collapse]");
-  if (t) { setCollapsed(t.dataset.collapse, !COLLAPSED.has(t.dataset.collapse)); return; }
+  // The chevron, or anywhere on its section's header row (owner 2026-11-25) — not a link or another button there.
+  const t = ev.target.closest("[data-collapse]") || (!ev.target.closest("a, button, input, select") && ev.target.closest("h2[data-fold]"));
+  if (t) { const id = t.dataset.collapse || t.dataset.fold; setCollapsed(id, !COLLAPSED.has(id)); return; }
   const q = ev.target.closest("[data-goto-sec]");
   if (q && q.dataset.gotoSec) {
     const go = () => { setCollapsed(q.dataset.gotoSec, false); const el = $(q.dataset.gotoSec); if (el) el.scrollIntoView({block: "start", behavior: "smooth"}); };
@@ -575,7 +577,7 @@ function renderView() {
   // The chevron at the right end of a section's header collapses it to that header (owner 2026-11-24).
   // While the filter box has text, every section shows its matches, collapsed or not.
   const isFolded = (id) => COLLAPSED.has(id) && !$("q").value.trim();
-  const head = (ico, title, n, id) => `<h2>${ico}${esc(title)} <span class="n">${n}</span><button type="button" class="collapse"
+  const head = (ico, title, n, id) => `<h2 class="foldable" data-fold="${esc(id)}" title="${isFolded(id) ? "Expand" : "Collapse"}">${ico}${esc(title)} <span class="n">${n}</span><button type="button" class="collapse"
     data-collapse="${esc(id)}" aria-expanded="${!isFolded(id)}" title="${isFolded(id) ? "Expand" : "Collapse"}"
     aria-label="${isFolded(id) ? "Expand" : "Collapse"} ${esc(title)}">${IC.chevron}</button></h2>`;
   const secCls = (id) => (isFolded(id) ? " collapsed" : "");

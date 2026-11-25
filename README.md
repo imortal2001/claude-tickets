@@ -426,7 +426,8 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
   posts it to your report channel, with the lines to paste into the daily report channel's thread.
 
 Tabs: **Board** (tickets by status), **Table** (your Slack List) and **Report** (your day).
-The chevron at the right end of a section's header collapses it to its header and count; the board remembers
+A click anywhere on a section's header row (it lights up on hover), or on the chevron at its right end, collapses it
+to its header and count, and a second click opens it again; the board remembers
 which sections you collapsed (in this browser), and a section opens again when you jump to it or search.
 
 On the Board, every ticket in Jira's review status that isn't being worked on, needing changes or needing your reply
