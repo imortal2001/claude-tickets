@@ -83,7 +83,7 @@ function conflictPrompts(t) {
   if (!prs.length) return "";
   const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
   const ask = `${which} ${prs.length > 1 ? "have" : "has"} merge conflicts. Which files conflict, and why (what changed on the base branch)? Don't change anything yet; tell me how you would resolve them.`;
-  const fix = `Fix the merge conflicts in ${which}: merge the base branch into the PR branch (no rebase, no force-push), resolve them as the runbook says, check only what the merge touched (lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what you resolved and what you ran.`;
+  const fix = `Fix the merge conflicts in ${which}: in a git worktree of the PR branch, not the main checkout, merge the base branch into the PR branch (no rebase, no force-push), resolve them as the runbook says, check only what the merge touched (lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what you resolved and what you ran.`;
   return `<button type="button" class="bad" data-q="${esc(ask)}">What conflicts?</button><button type="button" class="bad" data-q="${esc(fix)}">Fix the conflict</button>`;
 }
 function syncRunPick() {
