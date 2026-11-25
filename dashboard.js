@@ -496,8 +496,13 @@ function renderView() {
   const c = classify(rows), {isLive, replyDue, reviewWait} = c;
   // 1) In progress: Claude is working on it now. 2) Feedback waiting: a reviewer asked for changes and nothing has
   // been done on our side yet ("Action needed: changes requested"). 3) Everything else, grouped by its Jira status.
+  // In start order (owner 2026-11-25): the runs, first started on top; then the queued ones in queue order; then
+  // tickets only worked on in another Claude session.
+  const queuePos = (t) => { const i = (data.queued || []).findIndex((l) => l.split(" ")[0] === t.key); return i < 0 ? Infinity : i; };
+  const liveRank = (t) => (t.run.state === "running" ? 0 : t.run.state === "queued" ? 1 : 2);
   const live = c.live.map((t) => ({...t, _moved: true}))
-    .sort((a, b) => (b.run.state === "running") - (a.run.state === "running") || a.key.localeCompare(b.key));
+    .sort((a, b) => liveRank(a) - liveRank(b) || (a.run.since || Infinity) - (b.run.since || Infinity)
+      || queuePos(a) - queuePos(b) || a.key.localeCompare(b.key));
   const waiting = c.waiting.map((t) => ({...t, _moved: true})).sort((a, b) => a.key.localeCompare(b.key));
   const toReply = c.toReply.map((t) => ({...t, _moved: true, _reply: true})).sort((a, b) => a.key.localeCompare(b.key));
   // The reviewer's turn: the newest message in the review thread is ours.
