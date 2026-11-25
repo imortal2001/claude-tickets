@@ -349,6 +349,41 @@ def set_run_settings(body: dict) -> tuple[bool, str]:
     return True, f"{ {'fix': 'Fix Now', 'review': 'Review', 'watch': 'Feedback watch'}.get(which, 'Migrate') }: {b.MODELS[pick['model']]} · {pick['effort']}"
 
 
+def _drop_queued(label: str) -> dict | None:
+    """Take the queued job with this label out of its queue, and put its conversation back to where it was before
+    it was queued, so its card stops saying "Queued" at once (owner 2026-11-25). None when no queued job has it."""
+    for q in (b.jobs, getattr(b, "side_jobs", None)):
+        if q is None:
+            continue
+        with q.mutex:
+            job = next((j for j in q.queue if j.get("label", j.get("key")) == label), None)
+            if job is not None:
+                q.queue.remove(job)
+        if job is None:
+            continue
+        q.task_done()
+        b.cancelled.discard(label)
+        entry = b.get_thread(job["thread_ts"]) or {}
+        if entry.get("status") == "queued":
+            b.update_thread(job["thread_ts"], status=entry.get("status_before") or "stopped")
+        b.log.info("removed %s from the queue (dashboard)", label)
+        return job
+    return None
+
+
+CONFLICT_RE = re.compile(r"(Fix the merge conflicts in |PR #\d+ .{0,80}merge conflicts\. Which files)")
+
+
+def is_conflict_run(ts: str, entry: dict) -> bool:
+    """A conversation started by a conflict quick prompt: marked when it was sent, or (older ones) its last message
+    from the owner is one. Its Resume and follow-ups use the side slot like the prompt did (owner 2026-11-25)."""
+    if entry.get("conflict"):
+        return True
+    rec = b.runlog_read(ts) if hasattr(b, "runlog_read") else {}
+    mine = [m.get("text", "") for m in rec.get("messages") or [] if m.get("who") == "you"]
+    return bool(mine) and bool(CONFLICT_RE.match(mine[-1]))
+
+
 def running_slots() -> dict:
     """{KEY: copy of its run slot} for every ticket running now: the main slot, and the side slot of a conflict fix
     started alongside it (owner 2026-11-25)."""
@@ -762,15 +797,21 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
             if proc and proc.poll() is None:
                 proc.terminate()
                 return True, f"Stopping {key}…"
-        for label in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)"):
+        labels = (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)")
+        for label in labels:
             for waiting_list in (b.waiting, getattr(b, "side_waiting", [])):
                 if label in waiting_list:
-                    b.cancelled.add(label)   # the worker skips it when its turn comes
                     waiting_list.remove(label)
+                    if not _drop_queued(label):
+                        b.cancelled.add(label)   # already being taken: the worker skips it
                     return True, f"Removed {label} from the queue."
+        # A queued job no waiting list names (about to start, or removed before 2026-11-25 and still queued)
+        if any(_drop_queued(label) for label in labels):
+            return True, f"Removed {key} from the queue."
         return False, f"{key} is not running or queued."
     if action == "resume":
-        if key in running_slots() or any(l in b.waiting for l in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)")):
+        if key in running_slots() or any(l in b.waiting + list(getattr(b, "side_waiting", []))
+                                          for l in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)")):
             return False, f"{key} is already queued or running."
         with b._state_lock:
             threads = b.load_state()["threads"]
@@ -789,13 +830,21 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
                if rec.get("status") == "ended_turn" else
                "You were interrupted (stopped, failed, or the bridge restarted), so any command, test run or subagent "
                "that was still running was stopped.")
-        b.update_thread(ts, status="queued")
-        b.waiting.append(f"{key} (resume)")
-        b.jobs.put({"kind": "reply", "key": key, "thread_ts": ts, "resume": True, "label": f"{key} (resume)", "override": override, "text": (
-            why + " Continue the task from where you stopped — re-run whatever did not finish, running subagents in "
-            "the foreground this time — and finish it as the runbook says, ending with the final report.")})
+        b.update_thread(ts, status="queued", status_before=rec.get("status"))
+        job = {"kind": "reply", "key": key, "thread_ts": ts, "resume": True, "label": f"{key} (resume)", "override": override,
+               "text": why + " Continue the task from where you stopped — re-run whatever did not finish, running "
+                       "subagents in the foreground this time — and finish it as the runbook says, ending with the final report."}
+        if is_conflict_run(ts, rec):   # a conflict fix resumes like it started: alongside, or in a free main slot
+            q, msg, extra = _queue_for(key, True)
+            q.put({**job, **(extra or {"label": f"{key} (resume)"})})
+            if q is b.jobs:
+                b.waiting.append(f"{key} (resume)")
+        else:
+            q, msg = b.jobs, None
+            b.waiting.append(f"{key} (resume)")
+            q.put(job)
         b.post(client, ts, f"▶ Resuming {key} where it stopped (from the dashboard).")
-        return True, f"Resuming {key}…", {"ts": ts}
+        return True, msg or f"Resuming {key}…", {"ts": ts}
     return False, "Unknown action."
 
 
@@ -1036,7 +1085,7 @@ def start_chat(key: str, text: str, fresh: bool = False, side: bool = False) -> 
     fork = run if run and run.get("session_id") else None
     b.update_thread(tid, key=key, mode="chat", status="queued", started=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     forked_from_ts=fork["thread_ts"] if fork else None,
-                    forked_from=fork["session_id"] if fork else None)
+                    forked_from=fork["session_id"] if fork else None, **({"conflict": True} if side else {}))
     q.put({"kind": "chat", "key": key, "thread_ts": tid, "text": text,
            "fork_from": fork["session_id"] if fork else None,
            "fork_name": (fork.get("session_name") or key) if fork else None, **extra})
@@ -1069,7 +1118,8 @@ def post_reply(channel: str, ts: str, text: str, side: bool = False) -> tuple[bo
             b.log.info("add-on queued for %s (%s)", entry["key"], ts)
             return True, "Add-on queued — Claude gets it after its next step."
         b.runlog_append(ts, "you", text)
-        b.update_thread(ts, status="queued", status_before=entry.get("status"))
+        side = side or bool(entry.get("conflict"))   # a follow-up in a conflict fix's conversation stays alongside
+        b.update_thread(ts, status="queued", status_before=entry.get("status"), **({"conflict": True} if side else {}))
         q, msg, extra = _queue_for(entry["key"], side)
         q.put({"kind": "reply", "key": entry["key"], "thread_ts": ts, "text": text, **extra})
         b.log.info("dashboard reply queued for %s (local conversation)%s", entry["key"],

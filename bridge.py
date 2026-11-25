@@ -326,7 +326,9 @@ def run_claude(prompt: str, key: str, session_id: str | None, new_session_id: st
     cur.update(proc=None)
     if proc.returncode != 0 and not out.strip():
         log.error("claude exited %s for %s: %s", proc.returncode, key, err[-2000:])
-        return {"ok": False, "stopped": proc.returncode in (-15, -9), "error": err[-500:]}
+        # Stop terminates it: -15 / -9 as a signal, or 143 / 137 when claude exits on it itself (owner 2026-11-25:
+        # Stop showed as "failed ()" and the run could not resume from where it stopped)
+        return {"ok": False, "stopped": proc.returncode in (-15, -9, 143, 137), "error": err[-500:]}
     try:
         data = json.loads(out.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
