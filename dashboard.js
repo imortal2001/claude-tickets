@@ -251,6 +251,10 @@ function waitAge(ts) {
 const threadAttrs = (t) => t.review_thread
   ? `data-thread="${esc(t.review_thread.channel)}|${esc(t.review_thread.ts)}" data-name="${esc(t.key)} review thread"` : "";
 function replyTodo(t) {
+  if (!(t.reply && t.reply.needed))   // in Fixed: reply only because the reviewer's conflict ask is fixed (2026-11-25)
+    return `✅ Conflict fixed → PR #${t.pr.main.number} merges cleanly; ${t.review_thread
+      ? `<button class="rowlink act" ${threadAttrs(t)} title="Open the review thread">reply in the review thread</button>`
+      : "reply in the review thread"}`;
   const stg = (t.pr && t.pr.stg) || [];
   const what = t.reply.mode === "fix" ? "Fixed" : "Migrated";
   const merge = stg.length ? `merge + deploy staging PR ${stg.map((s) => `<a href="${esc(s.url)}" target="_blank">#${s.number}</a>`).join(", ")}, then ` : "";
@@ -297,7 +301,7 @@ function card(t) {
       ${t._conflict ? `<div class="todo conflict"><span class="i">${IC.alert}</span><span>${conflicted(t)
         ? (t.conflict && t.conflict.open ? "The reviewer asks to fix the merge conflict: Fix the conflict → (no Fix Now needed)"
           : `PR #${t.pr.main.number} conflicts with main, so it can't merge: Fix the conflict →`)
-        : "The PR merges cleanly now: reply in the review thread to clear this"}</span></div>` : ""}
+        : "GitHub is still checking whether the PR merges cleanly"}</span></div>` : ""}
       ${t._wait ? `<div class="waitline"><span class="i">${IC.hourglass}</span>${t.review_thread ? `<button class="rowlink" ${threadAttrs(t)} title="Open the review thread">` : "<span>"}${
         waitSince(t) ? `Sent for review ${esc(t.review_turn.time)} · waiting ${waitAge(waitSince(t))} for the reviewer` : `${esc(ST().review)} · waiting for the reviewer`}${t.review_thread ? "</button>" : "</span>"}</div>` : ""}
       ${t.next_step ? `<div class="next"><span class="i">${IC.arrow}</span><span><span class="lbl">Next:</span> <span class="val">${esc(t.next_step)}</span></span></div>` : ""}
@@ -451,10 +455,14 @@ function render() {
 // The board's buckets (also counted in the sidebar). Same rules as before the 2026-11-20 redesign.
 function classify(rows) {
   const isLive = (t) => ["running", "queued"].includes(t.run.state) || t.elsewhere.some((s) => s.state === "working");
-  // The reviewer only asked to fix a merge conflict (owner 2026-11-25): its own section, not changes requested.
-  // So is a PR into main that conflicts, asked about or not: it can't merge until it is fixed (owner 2026-11-25).
-  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && (!!(t.conflict && t.conflict.open) || conflicted(t));
-  const replyDue = (t) => !isLive(t) && !t.feedback.open && !conflictAsk(t) && t.reply && t.reply.needed;
+  // Conflict to fix (owner 2026-11-25): a PR into main that conflicts, asked about or not, can't merge until it is
+  // fixed; one the reviewer asked about stays here until GitHub says it merges cleanly. Once it does, an asked one
+  // needs your reply ("Fixed: reply"); an unasked one simply goes back to waiting for the reviewer.
+  const asked = (t) => !!(t.conflict && t.conflict.open);
+  const clean = (t) => !!(t.pr && t.pr.main && t.pr.main.mergeable === "MERGEABLE");
+  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && (conflicted(t) || (asked(t) && !clean(t)));
+  const conflictFixed = (t) => !isLive(t) && !t.feedback.open && asked(t) && clean(t);
+  const replyDue = (t) => !isLive(t) && !t.feedback.open && !conflictAsk(t) && ((t.reply && t.reply.needed) || conflictFixed(t));
   // Every Jira In Review ticket that isn't being worked on, needing changes or needing a reply waits on the reviewer
   // (owner 2026-11-23: no separate "In Review" group, also when the review thread can't be read).
   const reviewWait = (t) => t.status === ST().review && !isLive(t) && !t.feedback.open && !conflictAsk(t) && !replyDue(t);

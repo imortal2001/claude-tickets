@@ -438,9 +438,10 @@ conflict, has no review report and asks for nothing else), the feedback watch co
 feedback. The card goes to **Conflict to fix** instead of Action needed, with a "💬 Conflict ask" chip and a
 **Fix the conflict →** button: it sends the conflict prompt in the ticket's chat, so it runs alongside like the chat's
 own conflict prompts, and never starts a Fix Now round. The report channel gets "A merge conflict to fix on <KEY>".
-Once the PR merges cleanly the card says so; your reply in the review thread clears it. A ticket whose PR into main
-conflicts goes there too, asked about or not ("PR #N conflicts with main, so it can't merge"), unless it is running or
-has real feedback (then Fix Now merges main as part of the round).
+A ticket whose PR into main conflicts goes there too, asked about or not ("PR #N conflicts with main, so it can't
+merge"), unless it is running or has real feedback (then Fix Now merges main as part of the round). Once GitHub says the
+PR merges cleanly, one the reviewer asked about moves to **Fixed: reply to the reviewer** ("Conflict fixed → reply in
+the review thread"; your reply clears it), and one nobody asked about goes straight back to **Waiting for review**.
 
 ## Day to day
 
