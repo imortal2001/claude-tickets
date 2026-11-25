@@ -209,7 +209,7 @@ function mainAction(t) {
     ? `<button class="primary" data-act="resume" data-key="${k}" title="Continue this session where it stopped">Resume →</button>` : "";
   if (t.feedback.open)
     return `<button class="${resume ? "" : "primary"}" data-act="fix" data-key="${k}">Fix Now →</button>${resume}`;
-  if (t.conflict && t.conflict.open && conflicted(t))   // a conflict ask: the conflict prompt, never Fix Now
+  if (t._conflict && conflicted(t))   // Conflict to fix: the conflict prompt, never Fix Now
     return `<button class="${resume ? "" : "primary"}" data-conflictfix="${k}" title="Merge main in the ticket's worktree, resolve, push — alongside any running ticket">Fix the conflict →</button>${resume}`;
   if (resume) return resume;
   // A finished run waiting on the owner's merge / reply has nothing to fix, even while Jira still says Dev In Progress
@@ -287,7 +287,7 @@ function card(t) {
   return `<div class="card ${r.state === "running" ? "running" : ""}${t.key === openKey ? " open" : ""}" data-key="${esc(t.key)}" ${threadAttrs(t)} ${t.review_thread ? 'title="Click to open the review thread"' : ""}><div class="body">
     <div class="title"><a class="key" href="${CFG.jira}/browse/${esc(t.key)}" target="_blank">${esc(t.key)}</a>
       <span class="summary" title="${esc(t.jira_summary || t.summary)}">${esc(t.summary)}</span></div>
-    <div class="meta">${t._moved ? `<span class="chip status">Jira: ${esc(t.status)}</span>` : ""}${prChips(t.pr)}${fb}${t._conflict ? conflictChip(t) : thChip}${
+    <div class="meta">${t._moved ? `<span class="chip status">Jira: ${esc(t.status)}</span>` : ""}${prChips(t.pr)}${fb}${t._conflict && t.conflict && t.conflict.open ? conflictChip(t) : thChip}${
       t._wait && waitSince(t) ? `<span class="chip wait" title="Waiting for the reviewer since ${esc(t.review_turn.time)}">${IC.clock}${waitAge(waitSince(t))} wait</span>` : ""}</div>
     ${r.state === "running" && r.activity ? `<div class="activity">${esc(r.activity)}</div>` : ""}
     ${r.state !== "running" && w && w.state === "working" && w.last ? `<div class="activity">${esc(w.last)}</div>` : ""}
@@ -295,7 +295,8 @@ function card(t) {
       <div><span class="i ${r.state === "finished" ? "ok" : ""}">${({finished: IC.check, running: IC.play, queued: IC.dots, stopped: IC.stop, failed: IC.alert, ended_turn: IC.question})[r.state] || IC.dots}</span><span>${runLine(t).replace(/^(✅|⏹|⚠️|ℹ️|⏳|•)\s*/, "")}</span></div>
       ${t._reply ? `<div class="todo"><span class="i ok">${IC.check}</span><span>${replyTodo(t).replace(/^✅\s*/, "")}</span></div>` : ""}
       ${t._conflict ? `<div class="todo conflict"><span class="i">${IC.alert}</span><span>${conflicted(t)
-        ? "The reviewer asks to fix the merge conflict: Fix the conflict → (no Fix Now needed)"
+        ? (t.conflict && t.conflict.open ? "The reviewer asks to fix the merge conflict: Fix the conflict → (no Fix Now needed)"
+          : `PR #${t.pr.main.number} conflicts with main, so it can't merge: Fix the conflict →`)
         : "The PR merges cleanly now: reply in the review thread to clear this"}</span></div>` : ""}
       ${t._wait ? `<div class="waitline"><span class="i">${IC.hourglass}</span>${t.review_thread ? `<button class="rowlink" ${threadAttrs(t)} title="Open the review thread">` : "<span>"}${
         waitSince(t) ? `Sent for review ${esc(t.review_turn.time)} · waiting ${waitAge(waitSince(t))} for the reviewer` : `${esc(ST().review)} · waiting for the reviewer`}${t.review_thread ? "</button>" : "</span>"}</div>` : ""}
@@ -451,7 +452,8 @@ function render() {
 function classify(rows) {
   const isLive = (t) => ["running", "queued"].includes(t.run.state) || t.elsewhere.some((s) => s.state === "working");
   // The reviewer only asked to fix a merge conflict (owner 2026-11-25): its own section, not changes requested.
-  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && !!(t.conflict && t.conflict.open);
+  // So is a PR into main that conflicts, asked about or not: it can't merge until it is fixed (owner 2026-11-25).
+  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && (!!(t.conflict && t.conflict.open) || conflicted(t));
   const replyDue = (t) => !isLive(t) && !t.feedback.open && !conflictAsk(t) && t.reply && t.reply.needed;
   // Every Jira In Review ticket that isn't being worked on, needing changes or needing a reply waits on the reviewer
   // (owner 2026-11-23: no separate "In Review" group, also when the review thread can't be read).
