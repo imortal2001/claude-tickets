@@ -530,7 +530,8 @@ def state() -> dict:
         fb_open = bool(fb.get("feedback_open")) and not any(
             r.get("mode") == "fix" and fb_ts and tsnum(r["thread_ts"]) > tsnum(fb_ts) for r in runs)
         # The reviewer only asked to fix a merge conflict (owner 2026-11-25): "Conflict to fix", open until the owner
-        # replies in the thread (the watch clears it), and never under changes requested.
+        # replies in the thread, and never under changes requested. The watch clears it on its next run; the board
+        # already treats it as answered once the owner's reply is newer than the ask (below).
         ca_ts = fb.get("conflict_ts")
         conflict_open = bool(fb.get("conflict_open"))
         # A reviewer message newer than the last watch run counts as feedback straight away, marked "not checked yet";
@@ -631,7 +632,8 @@ def state() -> dict:
                        "when": r.get("finished_at") or r.get("last_run") or (r.get("started") or "")[:16].replace("T", " ")}
                       for r in runs[:8]],
             "review_turn": rturn,
-            "conflict": {"open": conflict_open and not fb_open, "ts": ca_ts,
+            "conflict": {"open": conflict_open and not fb_open and not (
+                             ca_ts and owner_replied_since(rthread, tsnum(ca_ts), ttl) is True), "ts": ca_ts,
                          "link": f"{W.SLACK_URL}/archives/{REVIEW_CHANNEL}/p{ca_ts.replace('.', '')}" if ca_ts else None},
             "feedback": {"open": fb_open, "ts": fb_ts, "unchecked": unchecked,
                          "unchecked_time": rturn.get("time") if unchecked else None,
