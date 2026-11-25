@@ -64,12 +64,14 @@ async function load() {
 
 // Model and effort of the next run (owner request 2026-11-17). Filled once; a select being used is left alone.
 function pickOf(s, which) { return which === "run" ? s : (s[which] || s); }
+// The ticket(s) running now: the main run, and a conflict fix running alongside it (owner 2026-11-25).
+const isRunning = (key) => !!data && !!key && [data.running, data.running_side].some((r) => r && r.key === key);
 // While this chat's ticket is running, what you type is an add-on the session gets after its next step (2026-11-19).
 function syncReplyHint() {
-  $("quick").hidden = !threadChat || !threadRef || !!(data && data.running && data.running.key === ($("logtitle").textContent || "").split(" · ")[0]);
-  if (!threadChat || !data) return;
   const key = ($("logtitle").textContent || "").split(" · ")[0];
-  const working = data.running && data.running.key === key;
+  $("quick").hidden = !threadChat || !threadRef || isRunning(key);
+  if (!threadChat || !data) return;
+  const working = isRunning(key);
   $("replytext").placeholder = working ? "Add info while Claude works — it gets it after its next step…" : "Reply to Claude…";
   $("replyhint").textContent = working ? "↩ to send · ⇧↩ new line · added to the running session without stopping it"
                                        : "↩ to send · ⇧↩ new line · continues this ticket's Claude session";
@@ -84,7 +86,8 @@ function conflictPrompts(t) {
   const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
   const ask = `${which} ${prs.length > 1 ? "have" : "has"} merge conflicts. Which files conflict, and why (what changed on the base branch)? Don't change anything yet; tell me how you would resolve them.`;
   const fix = `Fix the merge conflicts in ${which}: in a git worktree of the PR branch, not the main checkout, merge the base branch into the PR branch (no rebase, no force-push), resolve them as the runbook says, check only what the merge touched (lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what you resolved and what you ran.`;
-  return `<button type="button" class="bad" data-q="${esc(ask)}">What conflicts?</button><button type="button" class="bad" data-q="${esc(fix)}">Fix the conflict</button>`;
+  // data-side: they start at once alongside another ticket's run, in the ticket's own worktree (owner 2026-11-25)
+  return `<button type="button" class="bad" data-side="1" data-q="${esc(ask)}">What conflicts?</button><button type="button" class="bad" data-side="1" data-q="${esc(fix)}">Fix the conflict</button>`;
 }
 function syncRunPick() {
   const s = data && data.run_settings;
@@ -127,9 +130,9 @@ function health() {
   const pollOk = h.jira_poll_age != null && h.jira_poll_age < 300;
   const watchAge = w.last_run ? now - w.last_run : null;
   const watchOk = watchAge != null && watchAge < 2 * 3600 && !/fail/i.test(w.last_line || "");
-  const run = data.running.key
-    ? `<span class="pill"><span class="dot run"></span>Running: <b>${esc(data.running.key)}</b> ${esc(data.running.kind || "")} · ${mins(data.running.since)}</span>`
-    : `<span class="pill"><span class="dot"></span>Nothing running</span>`;
+  const pill = (r, label) => `<span class="pill"><span class="dot run"></span>${label}: <b>${esc(r.key)}</b> ${esc(r.kind || "")} · ${mins(r.since)}</span>`;
+  const side = data.running_side && data.running_side.key ? pill(data.running_side, "Alongside") : "";
+  const run = (data.running.key ? pill(data.running, "Running") : `<span class="pill"><span class="dot"></span>Nothing running</span>`) + side;
   const q = data.queued.length ? `<span class="pill">Queued: ${esc(data.queued.join(", "))}</span>` : "";
   $("health").innerHTML = `<span class="group">` +
     `<span class="pill bridge" title="Slack bridge"><span class="dot ok"></span>Bridge</span>` +
@@ -898,7 +901,7 @@ $("quick").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-q]"), q = $("quick");
   if (!b || !threadRef || q.getAttribute("aria-busy") === "true") return;
   q.setAttribute("aria-busy", "true");
-  try { await postReply(b.dataset.q); } finally { q.removeAttribute("aria-busy"); }
+  try { await postReply(b.dataset.q, !!b.dataset.side); } finally { q.removeAttribute("aria-busy"); }
 });
 $("logbody").addEventListener("click", (e) => {
   const b = e.target.closest("[data-more]");
@@ -1124,12 +1127,12 @@ function applyMentions(text) {
 }
 
 // ---- replies
-async function postReply(text) {
+async function postReply(text, side = false) {
   const [channel, ts] = threadRef.split("|");
   if (channel === CFG.review) text = applyMentions(text);
   try {
     const r = await fetch("/api/reply", {method: "POST", headers: {"Content-Type": "application/json", "X-Dashboard": "1"},
-      body: JSON.stringify({channel, ts, text})});
+      body: JSON.stringify({channel, ts, text, side})});
     const j = await r.json();
     toast(j.message || (j.ok ? "Sent" : "Failed"));
     if (j.ok && j.ts) threadRef = `${channel}|${j.ts}`;   // a new chat now has its own conversation

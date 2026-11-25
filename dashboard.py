@@ -349,6 +349,13 @@ def set_run_settings(body: dict) -> tuple[bool, str]:
     return True, f"{ {'fix': 'Fix Now', 'review': 'Review', 'watch': 'Feedback watch'}.get(which, 'Migrate') }: {b.MODELS[pick['model']]} · {pick['effort']}"
 
 
+def running_slots() -> dict:
+    """{KEY: copy of its run slot} for every ticket running now: the main slot, and the side slot of a conflict fix
+    started alongside it (owner 2026-11-25)."""
+    slots = [b.current, getattr(b, "side", None)]
+    return {s["key"]: dict(s) for s in slots if s and s.get("key")}
+
+
 def _watch_state() -> dict:
     # Kept on the bridge module so it survives this file's live reloads (a copy from before the lock gets one).
     w = b.__dict__.setdefault("_dash_watch", {"running": False, "keys": set(), "next_ok": 0.0})
@@ -422,7 +429,8 @@ def state() -> dict:
         steps = {}
     live = cached("live", 10, b.scan_live_sessions)
     waiting = list(b.waiting)
-    cur = dict(b.current)
+    slots = running_slots()
+    main = dict(b.current)
 
     runs_by_key: dict = {}
     for ts, v in jobs_state.get("threads", {}).items():
@@ -439,7 +447,8 @@ def state() -> dict:
     w = _watch_state()
     for key, info in seen.items():
         runs = sorted(runs_by_key.get(key, []), key=lambda r: tsnum(r["thread_ts"]), reverse=True)
-        running = cur.get("key") == key
+        cur = slots.get(key, {})
+        running = bool(cur)
         # A chat (Chat →) is not a migrate / fix run: it never sets the card's run state, except while it is the
         # job running now. Chat → is its own conversation with Claude, never a run's thread (owner, 2026-11-16).
         latest = (next((r for r in runs if r["thread_ts"] == cur.get("thread_ts")), None) if running else None) \
@@ -567,8 +576,10 @@ def state() -> dict:
         "now": time.time(),
         "cfg": {**W.PUBLIC, **WF.PUBLIC},
         "tickets": tickets,
-        "running": {"key": cur.get("key"), "kind": cur.get("kind"), "since": cur.get("since"),
-                    "model": cur.get("model"), "effort": cur.get("effort")},
+        "running": {"key": main.get("key"), "kind": main.get("kind"), "since": main.get("since"),
+                    "model": main.get("model"), "effort": main.get("effort")},
+        # a conflict fix running alongside it in the side slot (owner 2026-11-25); key None when there is none
+        "running_side": {k: (getattr(b, "side", None) or {}).get(k) for k in ("key", "kind", "since")},
         "run_settings": run_settings_view(),
         "stats": cached("run-stats", 60, run_stats),
         "queued": waiting,
@@ -685,12 +696,13 @@ def post_note(key: str, text: str) -> tuple[bool, str]:
     text = (text or "").strip()
     if not KEY_RE.match(key or "") or not text:
         return False, "Need a ticket key and text."
-    if b.current.get("key") != key or not b.current.get("thread_ts"):
+    run = running_slots().get(key) or {}
+    if not run.get("thread_ts"):
         return False, f"{key} is not running now."
     if len(text) > 6000:
         text = text[:5980] + "\n…(see the session)"
-    b.post(client, b.current["thread_ts"], text)
-    b.log.info("note from the %s session posted to %s", key, b.current["thread_ts"])
+    b.post(client, run["thread_ts"], text)
+    b.log.info("note from the %s session posted to %s", key, run["thread_ts"])
     threading.Thread(target=plan_to_table, args=(key, text), daemon=True).start()
     return True, "Posted to the run's chat."
 
@@ -701,7 +713,7 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
         return False, "Not a ticket key."
     override = b.clean_override(override) if hasattr(b, "clean_override") else None
     if action == "migrate":
-        if key in b.waiting or b.current.get("key") == key:
+        if key in b.waiting or key in running_slots():
             return False, f"{key} is already queued or running."
         busy = b.busy_elsewhere(key)
         if busy:
@@ -733,7 +745,7 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
         if busy:
             return False, busy
         label = f"{key} (review)"
-        if label in b.waiting or b.current.get("key") == key:
+        if label in b.waiting or key in running_slots():
             return False, f"{key} is already queued or running."
         position = len(b.waiting) + (1 if b.current["key"] else 0)
         head = f"🔍 *{key}* — reviewing the PR (report only) · {'started' if position == 0 else 'queued'} · session `{key}-review`"
@@ -744,8 +756,9 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
         b.log.info("dashboard review queued for %s (%s)", key, tid)
         return True, f"{key} (review): {'starting' if position == 0 else f'queued ({position} ahead)'}.", {"ts": tid}
     if action == "stop":
-        if b.current.get("key") == key:
-            proc = b.current.get("proc")
+        run = next((s for s in (b.current, getattr(b, "side", None)) if s and s.get("key") == key), None)
+        if run:
+            proc = run.get("proc")
             if proc and proc.poll() is None:
                 proc.terminate()
                 return True, f"Stopping {key}…"
@@ -756,7 +769,7 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
                 return True, f"Removed {label} from the queue."
         return False, f"{key} is not running or queued."
     if action == "resume":
-        if b.current.get("key") == key or any(l in b.waiting for l in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)")):
+        if key in running_slots() or any(l in b.waiting for l in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)")):
             return False, f"{key} is already queued or running."
         with b._state_lock:
             threads = b.load_state()["threads"]
@@ -984,7 +997,22 @@ def chat_view(ts: str) -> dict:
     return read_local(ts)
 
 
-def start_chat(key: str, text: str, fresh: bool = False) -> tuple:
+def _queue_for(key: str, side: bool) -> tuple:
+    """The queue a chat job for `key` goes in, and the reply's wording. A conflict fix (`side`) starts in the side
+    slot while another ticket holds the main one; anything else, or with the main slot free, uses the main queue.
+    A ticket whose conflict fix runs in the side slot gets everything after it queued there too, so one ticket never
+    runs twice at once."""
+    busy, other = b.current.get("key"), (getattr(b, "side", None) or {}).get("key")
+    if other == key and hasattr(b, "side_jobs"):
+        return b.side_jobs, f"Queued — Claude starts after {key}'s conflict fix."
+    queued_here = any(label.split(" ")[0] == key for label in b.waiting)   # its own job waits in the main queue
+    if side and busy and busy != key and not queued_here and hasattr(b, "side_jobs"):
+        return b.side_jobs, (f"Queued alongside {busy}: it starts after the conflict fix for {other}." if other
+                             else f"Started alongside {busy}, in the ticket's own worktree.")
+    return b.jobs, (f"Queued — Claude starts after {busy}." if busy and busy != key else "Sent to Claude.")
+
+
+def start_chat(key: str, text: str, fresh: bool = False, side: bool = False) -> tuple:
     """Chat → on a ticket with no chat yet (or New chat): the first message opens a local conversation and
     continues the ticket's last run session itself (owner decision: no fork), or starts a blank <KEY>-chat
     with New chat. Later messages go through the normal reply path."""
@@ -993,7 +1021,7 @@ def start_chat(key: str, text: str, fresh: bool = False) -> tuple:
         return False, "Write a message."
     if key not in read_json(b.SEEN_FILE, {}):
         return False, f"{key} is not one of your tickets."
-    busy = b.current.get("key")
+    q, msg = _queue_for(key, side)
     head = f"💬 *{key}* — chat · session `{key}-chat`"
     tid = f"local-{time.time():.6f}"
     b._runlog_update(tid, lambda r: r.update(head=head, key=key))
@@ -1004,19 +1032,20 @@ def start_chat(key: str, text: str, fresh: bool = False) -> tuple:
     b.update_thread(tid, key=key, mode="chat", status="queued", started=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     forked_from_ts=fork["thread_ts"] if fork else None,
                     forked_from=fork["session_id"] if fork else None)
-    b.jobs.put({"kind": "chat", "key": key, "thread_ts": tid, "text": text,
-                "fork_from": fork["session_id"] if fork else None,
-                "fork_name": (fork.get("session_name") or key) if fork else None})
-    b.log.info("dashboard chat started for %s (%s)", key, tid)
-    return True, (f"Queued — Claude starts after {busy}." if busy else "Sent to Claude."), {"ts": tid}
+    q.put({"kind": "chat", "key": key, "thread_ts": tid, "text": text,
+           "fork_from": fork["session_id"] if fork else None,
+           "fork_name": (fork.get("session_name") or key) if fork else None})
+    b.log.info("dashboard chat started for %s (%s)%s", key, tid, " in the side slot" if q is not b.jobs else "")
+    return True, msg, {"ts": tid}
 
 
-def post_reply(channel: str, ts: str, text: str) -> tuple[bool, str]:
+def post_reply(channel: str, ts: str, text: str, side: bool = False) -> tuple[bool, str]:
     """Post the owner's own reply into a ticket thread, as the owner (user token). In the report channel the
-    bridge then sees an owner reply and continues that ticket's Claude session, as with a Slack reply."""
+    bridge then sees an owner reply and continues that ticket's Claude session, as with a Slack reply. `side`: a
+    conflict fix, which starts alongside another ticket's run (see _queue_for)."""
     if channel == b.CHANNEL and ts.startswith(("new:", "fresh:")):
         kind, key = ts.split(":", 1)
-        return start_chat(key.upper(), text, fresh=kind == "fresh")
+        return start_chat(key.upper(), text, fresh=kind == "fresh", side=side)
     if channel == b.CHANNEL and is_local(ts):
         text = (text or "").strip()
         if not text:
@@ -1024,7 +1053,7 @@ def post_reply(channel: str, ts: str, text: str) -> tuple[bool, str]:
         entry = b.get_thread(ts) or {}
         if not entry.get("key"):
             return False, "This conversation has no ticket run behind it."
-        if b.current.get("thread_ts") == ts:
+        if any(s.get("thread_ts") == ts for s in running_slots().values()):
             # An add-on while the run works (owner request 2026-11-19): handed to the session after its next step.
             if not hasattr(b, "queue_addon") or not entry.get("session_id"):
                 return False, "Claude is still working on this run; reply when it has finished its turn."
@@ -1036,9 +1065,11 @@ def post_reply(channel: str, ts: str, text: str) -> tuple[bool, str]:
             return True, "Add-on queued — Claude gets it after its next step."
         b.runlog_append(ts, "you", text)
         b.update_thread(ts, status="queued", status_before=entry.get("status"))
-        b.jobs.put({"kind": "reply", "key": entry["key"], "thread_ts": ts, "text": text})
-        b.log.info("dashboard reply queued for %s (local conversation)", entry["key"])
-        return True, "Sent to Claude."
+        q, msg = _queue_for(entry["key"], side)
+        q.put({"kind": "reply", "key": entry["key"], "thread_ts": ts, "text": text})
+        b.log.info("dashboard reply queued for %s (local conversation)%s", entry["key"],
+                   " in the side slot" if q is not b.jobs else "")
+        return True, msg
     if channel not in (REVIEW_CHANNEL, b.CHANNEL) or not TS_RE.match(ts or ""):
         return False, "That thread is not one the dashboard posts to."
     text = (text or "").strip().replace(f"@{W.REVIEWER}", f"<@{LEAD}>")
@@ -1577,7 +1608,7 @@ def handle_post(self):
         if self.path == "/api/reply":
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0") or 0)) or b"{}")
-                res = post_reply(body.get("channel", ""), body.get("ts", ""), body.get("text", ""))
+                res = post_reply(body.get("channel", ""), body.get("ts", ""), body.get("text", ""), bool(body.get("side")))
                 ok, msg = res[0], res[1]
                 return self._json(200 if ok else 409, {"ok": ok, "message": msg, **(res[2] if len(res) > 2 else {})})
             except Exception as exc:

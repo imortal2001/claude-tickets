@@ -1,7 +1,7 @@
 """The Claude Tickets bridge: the background service behind the dashboard.
 
 It checks Jira for the owner's tickets, runs one Claude Code session at a time for the dashboard's buttons (Migrate,
-Fix Now, Review, Resume, Chat; the rest queue), listens to Slack over Socket Mode (outbound, no public URL) for the
+Fix Now, Review, Resume, Chat; the rest queue; a chat's conflict fix may run alongside, in a second slot), listens to Slack over Socket Mode (outbound, no public URL) for the
 review threads, and serves the dashboard (dashboard.py). The feedback watch and the Slack List sync are in watch.py.
 Each session keeps all its detail; the app shows its chat and the final report. A reply in a run's Slack thread, when
 Slack run reports are on, is passed to that session (claude --resume).
@@ -151,6 +151,12 @@ FIX_PROMPT = workflow.prompt("fix")
 
 jobs: "queue.Queue[dict]" = queue.Queue()
 current: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
+# A second run slot (owner decision 2026-11-25): a merge-only conflict fix ("Fix the conflict" / "What conflicts?"
+# in the chat) starts at once while another ticket runs, instead of waiting behind it. It works in the ticket's own
+# worktree (the runbook's rule E), so the two never share a checkout. Everything else still runs one at a time.
+side: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
+side_jobs: "queue.Queue[dict]" = queue.Queue()
+_slot = threading.local()   # which slot the worker thread calling run_claude fills
 waiting: list[str] = []  # labels of the queued jobs (the dashboard shows them)
 cancelled: set[str] = set()  # queued labels removed from the dashboard; the worker skips them
 
@@ -212,7 +218,7 @@ def addon_watcher() -> None:
         time.sleep(3)
 
 
-def send_leftover_addons(key: str, thread_ts: str, session_id: str | None) -> bool:
+def send_leftover_addons(key: str, thread_ts: str, session_id: str | None, q: "queue.Queue[dict] | None" = None) -> bool:
     """The run finished before its next tool call: send the waiting notes as a chat message instead."""
     f = ADDONS / f"{session_id}.jsonl" if session_id else None
     if not f or not f.exists():
@@ -223,8 +229,8 @@ def send_leftover_addons(key: str, thread_ts: str, session_id: str | None) -> bo
         return False
     runlog_append(thread_ts, "system", "📎 The run finished before your add-on reached it — sending it as a chat message now.")
     update_thread(thread_ts, status="queued", status_before=(get_thread(thread_ts) or {}).get("status"))
-    jobs.put({"kind": "reply", "key": key, "thread_ts": thread_ts,
-              "text": "\n".join(n["text"] for n in notes)})
+    (q or jobs).put({"kind": "reply", "key": key, "thread_ts": thread_ts,
+                     "text": "\n".join(n["text"] for n in notes)})
     return True
 
 
@@ -290,14 +296,15 @@ def compact_session(client, key: str, thread_ts: str, session_id: str | None, wh
 
 def run_claude(prompt: str, key: str, session_id: str | None, new_session_id: str | None = None,
                fork: bool = False) -> dict:
+    cur = getattr(_slot, "cur", current)
     allset = run_settings()
     # A fix or review run — or a later turn in that run's chat — uses its own pick; other runs use the migrate pick.
     # Every run except a review passes the review pick on to the reviewer subagents it starts.
-    tmode = (get_thread(current.get("thread_ts") or "") or {}).get("mode")
-    is_review = current.get("kind") == "review" or tmode == "review"
-    is_fix = not is_review and (current.get("kind") == "fix" or tmode == "fix")
+    tmode = (get_thread(cur.get("thread_ts") or "") or {}).get("mode")
+    is_review = cur.get("kind") == "review" or tmode == "review"
+    is_fix = not is_review and (cur.get("kind") == "fix" or tmode == "fix")
     ms = allset["review"] if is_review else allset["fix"] if is_fix else allset
-    ms = current.get("override") or ms   # this run only, chosen in the confirm dialog
+    ms = cur.get("override") or ms   # this run only, chosen in the confirm dialog
     cmd = [str(CLAUDE), "-p", prompt + HEADLESS_NOTE + ("" if is_review else review_note(allset["review"])), *model_args(ms),
            "--settings", HOOK_SETTINGS, "--permission-mode", "auto", "--output-format", "json"]
     if session_id:
@@ -310,12 +317,12 @@ def run_claude(prompt: str, key: str, session_id: str | None, new_session_id: st
             cmd += ["--session-id", new_session_id]
     env = dict(os.environ)
     env["PATH"] = f"{HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
-    if current.get("thread_ts"):   # the run's model and effort, shown on its card
-        update_thread(current["thread_ts"], model=ms["model"], effort=ms["effort"])
+    if cur.get("thread_ts"):   # the run's model and effort, shown on its card
+        update_thread(cur["thread_ts"], model=ms["model"], effort=ms["effort"])
     proc = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    current.update(proc=proc, since=time.time(), model=ms["model"], effort=ms["effort"])
+    cur.update(proc=proc, since=time.time(), model=ms["model"], effort=ms["effort"])
     out, err = proc.communicate()
-    current.update(proc=None)
+    cur.update(proc=None)
     if proc.returncode != 0 and not out.strip():
         log.error("claude exited %s for %s: %s", proc.returncode, key, err[-2000:])
         return {"ok": False, "stopped": proc.returncode in (-15, -9), "error": err[-500:]}
@@ -347,19 +354,22 @@ def local_prompt(prompt: str, thread_ts: str) -> str:
                   "in the owner's Claude Tickets app.", prompt, count=1, flags=re.S)
 
 
-def worker(client) -> None:
+def worker(client, q: "queue.Queue[dict] | None" = None, slot: dict | None = None) -> None:
+    """Runs one queue's jobs, one at a time, in one run slot: the main queue, or the side queue."""
+    q, slot = q or jobs, slot if slot is not None else current
+    _slot.cur = slot
     while True:
-        job = jobs.get()
+        job = q.get()
         key, thread_ts = job["key"], job["thread_ts"]
         if job.get("label", key) in cancelled:
             cancelled.discard(job.get("label", key))
             update_thread(thread_ts, status="stopped", stopped_at=time.strftime("%Y-%m-%d %H:%M"))
             post(client, thread_ts, f"⏹ Removed from the queue (dashboard). Nothing ran for {key}.")
-            jobs.task_done()
+            q.task_done()
             continue
         if (job["kind"] in ("start", "fix", "review") or job.get("resume")) and job.get("label", key) in waiting:
             waiting.remove(job.get("label", key))
-        current.update(key=key, thread_ts=thread_ts, kind=job["kind"], override=clean_override(job.get("override")))
+        slot.update(key=key, thread_ts=thread_ts, kind=job["kind"], override=clean_override(job.get("override")))
         try:
             entry = get_thread(thread_ts) or {}
             if job["kind"] in ("start", "fix", "review") and is_local(thread_ts):
@@ -402,9 +412,9 @@ def worker(client) -> None:
                 if job.get("resume"):
                     _, last = session_size(entry.get("session_id"))
                     if last and time.time() - last > COMPACT_IDLE:   # the cache has expired: summarise before reloading
-                        current.update(kind="compact")
+                        slot.update(kind="compact")
                         compact_session(client, key, thread_ts, entry.get("session_id"), "idle over an hour before Resume")
-                        current.update(kind=job["kind"])
+                        slot.update(kind=job["kind"])
                 res = run_claude(prompt, key, entry.get("session_id"))
             if res.get("session_id"):
                 update_thread(thread_ts, session_id=res["session_id"])
@@ -428,7 +438,7 @@ def worker(client) -> None:
                 post(client, thread_ts, f"⚠️ The session for {key} failed ({res.get('error', 'unknown error')[:200]}). Check `{LOG}`.")
             if (res.get("stopped") or not res["ok"]):   # still cached now, so summarising is cheap; Resume starts small
                 sid_now = res.get("session_id") or (get_thread(thread_ts) or {}).get("session_id")
-                current.update(kind="compact")
+                slot.update(kind="compact")
                 compact_session(client, key, thread_ts, sid_now, "after Stop" if res.get("stopped") else "after a failure")
             else:
                 text = slack_text_from(res["result"])
@@ -440,16 +450,16 @@ def worker(client) -> None:
                         update_thread(thread_ts, status="queued", auto_resumes=n + 1)
                         post(client, thread_ts, f"↻ {key} ended its turn before finishing — resuming automatically ({n + 1}/{AUTO_RESUME_MAX}).")
                         waiting.append(f"{key} (resume)")
-                        jobs.put({"kind": "reply", "key": key, "thread_ts": thread_ts, "resume": True, "auto": n + 1,
-                                  "override": job.get("override"),
-                                  "label": f"{key} (resume)",
-                                  "text": AUTO_RESUME_TEXT.format(n=n + 1, max=AUTO_RESUME_MAX)})
+                        q.put({"kind": "reply", "key": key, "thread_ts": thread_ts, "resume": True, "auto": n + 1,
+                               "override": job.get("override"),
+                               "label": f"{key} (resume)",
+                               "text": AUTO_RESUME_TEXT.format(n=n + 1, max=AUTO_RESUME_MAX)})
                         log.info("auto-resume %s (%s) %d/%d", key, thread_ts, n + 1, AUTO_RESUME_MAX)
                         continue
                     post(client, thread_ts, f"⚠️ {key} ended its turn early {n + 1} times. Open the chat to see where it is, "
                                             "and reply there to continue.")
                     continue
-                if send_leftover_addons(key, thread_ts, res.get("session_id") or (get_thread(thread_ts) or {}).get("session_id")):
+                if send_leftover_addons(key, thread_ts, res.get("session_id") or (get_thread(thread_ts) or {}).get("session_id"), q):
                     log.info("add-on for %s sent as a chat message after the run", key)
                 if not text and (entry.get("mode") or job["kind"]) == "chat":
                     raw = (res.get("result") or "").strip()   # a chat answers in plain text, not a slack block
@@ -475,8 +485,8 @@ def worker(client) -> None:
             log.exception("job failed: %s", job)
             post(client, thread_ts, f"⚠️ Bridge error while running {key}. Check `{LOG}`.")
         finally:
-            current.update(key=None, thread_ts=None, since=None, kind=None, model=None, effort=None, override=None)
-            jobs.task_done()
+            slot.update(key=None, thread_ts=None, since=None, kind=None, model=None, effort=None, override=None)
+            q.task_done()
 
 
 def job_finished_hook(client, **kw) -> None:
@@ -925,7 +935,7 @@ def queue_fix(client, key: str, link: str, override: dict | None = None) -> int:
     """Queue a fix round (the dashboard's Fix Now →) in a new run thread. Returns how many jobs are ahead, or -1 when
     a fix for the ticket is already queued or running."""
     label = f"{key} (fix)"
-    if label in waiting or (current.get("key") == key and current.get("kind") == "fix"):
+    if label in waiting or (current.get("key") == key and current.get("kind") == "fix") or side.get("key") == key:
         log.info("fix for %s already queued/running; not duplicated", key)
         return -1
     position = len(waiting) + (1 if current["key"] else 0)
@@ -972,6 +982,7 @@ def main() -> None:
     mark_interrupted_runs()
     app = build_app()
     threading.Thread(target=worker, args=(app.client,), daemon=True).start()
+    threading.Thread(target=worker, args=(app.client, side_jobs, side), daemon=True, name="side-worker").start()
     threading.Thread(target=jira_poller, args=(app.client,), daemon=True).start()
     threading.Thread(target=feedback_watch_loop, args=(app.client,), daemon=True).start()
     threading.Thread(target=daily_report_loop, args=(app.client,), daemon=True).start()
