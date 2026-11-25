@@ -156,6 +156,7 @@ current: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
 # worktree (the runbook's rule E), so the two never share a checkout. Everything else still runs one at a time.
 side: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
 side_jobs: "queue.Queue[dict]" = queue.Queue()
+side_waiting: list[str] = []   # labels of the conflict fixes waiting for a slot (the header shows them; Stop removes them)
 _slot = threading.local()   # which slot the worker thread calling run_claude fills
 waiting: list[str] = []  # labels of the queued jobs (the dashboard shows them)
 cancelled: set[str] = set()  # queued labels removed from the dashboard; the worker skips them
@@ -354,12 +355,38 @@ def local_prompt(prompt: str, thread_ts: str) -> str:
                   "in the owner's Claude Tickets app.", prompt, count=1, flags=re.S)
 
 
+def _take(q: "queue.Queue[dict]", busy_key: str | None) -> dict | None:
+    """The first job in q whose ticket is not running in the other slot, taken out of q; None when there is none."""
+    with q.mutex:
+        for i, job in enumerate(q.queue):
+            if job.get("key") != busy_key:
+                del q.queue[i]
+                return job
+    return None
+
+
+def _next_job(own: "queue.Queue[dict]", slot: dict) -> tuple:
+    """The next job for this slot, and the queue it came from. The main slot takes its own queue first, then a
+    conflict fix still waiting for the side slot (owner 2026-11-25: it starts in whichever slot frees first). A job
+    whose ticket runs in the other slot waits, so one ticket never runs twice at once."""
+    other = side if slot is current else current
+    sources = (own, side_jobs) if slot is current else (own,)
+    while True:
+        for q in sources:
+            job = _take(q, other.get("key"))
+            if job is not None:
+                return job, q
+        with own.not_empty:   # wakes at once when a job is put in this slot's own queue; re-checks every second
+            own.not_empty.wait(1)
+
+
 def worker(client, q: "queue.Queue[dict] | None" = None, slot: dict | None = None) -> None:
-    """Runs one queue's jobs, one at a time, in one run slot: the main queue, or the side queue."""
-    q, slot = q or jobs, slot if slot is not None else current
+    """Runs jobs one at a time in one run slot: the main slot (its queue, then waiting conflict fixes) or the side
+    slot (conflict fixes)."""
+    own, slot = q or jobs, slot if slot is not None else current
     _slot.cur = slot
     while True:
-        job = q.get()
+        job, q = _next_job(own, slot)   # q: the queue this job came from (task_done, auto-resume)
         key, thread_ts = job["key"], job["thread_ts"]
         if job.get("label", key) in cancelled:
             cancelled.discard(job.get("label", key))
@@ -367,8 +394,10 @@ def worker(client, q: "queue.Queue[dict] | None" = None, slot: dict | None = Non
             post(client, thread_ts, f"⏹ Removed from the queue (dashboard). Nothing ran for {key}.")
             q.task_done()
             continue
-        if (job["kind"] in ("start", "fix", "review") or job.get("resume")) and job.get("label", key) in waiting:
-            waiting.remove(job.get("label", key))
+        if job["kind"] in ("start", "fix", "review") or job.get("label"):   # no longer waiting: off the header
+            for waiting_list in (waiting, side_waiting):
+                if job.get("label", key) in waiting_list:
+                    waiting_list.remove(job.get("label", key))
         slot.update(key=key, thread_ts=thread_ts, kind=job["kind"], override=clean_override(job.get("override")))
         try:
             entry = get_thread(thread_ts) or {}
