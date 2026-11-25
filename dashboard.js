@@ -178,7 +178,9 @@ function prChips(pr) {
   if (pr && pr.main) {
     const m = pr.main.mergeable, cls = m === "MERGEABLE" ? "ok" : m === "CONFLICTING" ? "bad" : "";
     const word = m === "MERGEABLE" ? "mergeable" : m === "CONFLICTING" ? "conflicts" : "checking";
-    out.push(`<a class="chip ${cls}" href="${esc(pr.main.url)}" target="_blank">PR #${pr.main.number} · ${word}</a>`);
+    // rechecking: GitHub is recomputing after main moved; this is its last answer (owner 2026-11-25)
+    const re = pr.main.rechecking ? ` <span class="rechk" title="main changed: GitHub is rechecking this PR. Showing its last known state until it answers (the board asks every 20 s).">↻</span>` : "";
+    out.push(`<a class="chip ${cls}" href="${esc(pr.main.url)}" target="_blank">PR #${pr.main.number} · ${word}${re}</a>`);
   } else out.push(`<span class="chip">no PR</span>`);
   for (const s of (pr && pr.stg) || []) out.push(`<a class="chip info" href="${esc(s.url)}" target="_blank">stg #${s.number} open</a>`);
   // A failed asset build (owner 2026-11-25): it blocks the merge, and the chat's "Rebuild assets" fixes it.

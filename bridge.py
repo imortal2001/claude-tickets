@@ -814,6 +814,14 @@ def jira_poller(client) -> None:
 
 WATCH_STAMP = BASE / "watch-last-run.txt"
 WATCH_EVERY = 3600
+
+
+def write_watch_stamp(text: str) -> None:
+    """Replace the stamp in one step: a reader never sees it half-written (empty), which failed a board refresh
+    (2026-11-25 10:39, "could not convert string to float: ''")."""
+    tmp = WATCH_STAMP.with_suffix(".tmp")
+    tmp.write_text(text)
+    tmp.replace(WATCH_STAMP)
 WATCH_CHECK_SECONDS = 300  # safety net only: review-channel events trigger the check instantly (owner 2026-11-18)
 
 
@@ -891,7 +899,7 @@ def feedback_watch_loop(client) -> None:
             last = float(WATCH_STAMP.read_text()) if WATCH_STAMP.exists() else 0.0
             if time.localtime().tm_wday < 5 and time.time() - last >= WATCH_EVERY and time.time() >= retry_at:
                 prev = WATCH_STAMP.read_text() if WATCH_STAMP.exists() else None
-                WATCH_STAMP.write_text(str(time.time()))
+                write_watch_stamp(str(time.time()))
                 t0 = time.time()
                 log.info("feedback watch started")
                 ok, text = run_feedback_watch()
@@ -899,7 +907,7 @@ def feedback_watch_loop(client) -> None:
                          text[:200].replace("\n", " "))
                 if text == _watch().BUSY:   # it read nothing: replies since the last real run stay unchecked
                     if prev is not None:
-                        WATCH_STAMP.write_text(prev)
+                        write_watch_stamp(prev)
                     retry_at = time.time() + 60   # and it is no success: the failure warning stays as it was
                 else:
                     if not ok and not failing:

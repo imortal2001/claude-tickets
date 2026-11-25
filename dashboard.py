@@ -109,18 +109,41 @@ def fetch_prs() -> dict:
     except (subprocess.SubprocessError, json.JSONDecodeError):
         return out
     assets = fetch_asset_checks()
+    # Every merge into main makes GitHub recompute each PR's mergeable ("UNKNOWN" meanwhile). Until it has the new
+    # answer, a PR keeps its last known one, marked "rechecking", and the board asks again every 20 s instead of every
+    # 2 minutes (owner 2026-11-25: every card flipped to "checking" and the sections emptied). Kept on the bridge
+    # module so it survives this file's live reloads.
+    known = b.__dict__.setdefault("_dash_mergeable", {})
+    rechecking = False
     for pr in prs:
+        m = pr.get("mergeable")
+        if m in ("MERGEABLE", "CONFLICTING"):
+            known[pr["number"]] = m
+        elif pr["number"] in known:
+            m, rechecking = known[pr["number"]], True
         found = {f"NJ-{n}" for n in re.findall(r"(?i)nj[-_ ]?(\d{5,6})", pr.get("title", "") + " " + pr.get("headRefName", ""))}
         for key in found:
             slot = out.setdefault(key, {"main": None, "stg": []})
-            item = {"number": pr["number"], "url": pr["url"], "mergeable": pr.get("mergeable"),
+            item = {"number": pr["number"], "url": pr["url"], "mergeable": m, "rechecking": m != pr.get("mergeable"),
                     "draft": pr.get("isDraft"), "base": pr.get("baseRefName"), "assets": assets.get(pr["number"])}
             if pr.get("baseRefName") == "main":
                 if not slot["main"] or pr["number"] > slot["main"]["number"]:
                     slot["main"] = item
             else:
                 slot["stg"].append(item)
+    b._dash_prs_rechecking = rechecking
+    stale = [pr["number"] for pr in prs if pr.get("mergeable") not in ("MERGEABLE", "CONFLICTING") and pr["number"] in known]
+    if stale:   # reading one PR makes GitHub compute its mergeable now, instead of whenever it gets to it
+        threading.Thread(target=_nudge_mergeable, args=(stale[:20],), daemon=True, name="pr-mergeable-nudge").start()
     return out
+
+
+def _nudge_mergeable(numbers: list) -> None:
+    for n in numbers:
+        try:
+            subprocess.run(["gh", "api", f"repos/{W.GH_REPO}/pulls/{n}", "--silent"], capture_output=True, timeout=30)
+        except subprocess.SubprocessError:
+            return
 
 
 def fetch_asset_checks() -> dict:
@@ -259,9 +282,16 @@ def transcript_path(session_id: str) -> Path | None:
     return None
 
 
+def _write_stamp(text: str) -> None:
+    (b.write_watch_stamp if hasattr(b, "write_watch_stamp") else b.WATCH_STAMP.write_text)(text)
+
+
 def watch_health() -> dict:
     stamp = b.WATCH_STAMP
-    last = float(stamp.read_text()) if stamp.exists() else 0
+    try:
+        last = float(stamp.read_text()) if stamp.exists() else 0
+    except ValueError:   # being rewritten by a bridge from before the one-step write
+        last = 0
     line = ""
     try:
         for l in reversed((b.HOME / ".claude/jira-automation/activity.log").read_text().splitlines()):
@@ -449,7 +479,7 @@ def trigger_watch(keys: list[str]) -> None:
 
     def go():
         prev = b.WATCH_STAMP.read_text() if b.WATCH_STAMP.exists() else None
-        b.WATCH_STAMP.write_text(str(time.time()))
+        _write_stamp(str(time.time()))
         ok, text = False, ""
         try:
             b.log.info("feedback watch started (new reviewer reply on %s)", ", ".join(sorted(keys)))
@@ -461,7 +491,7 @@ def trigger_watch(keys: list[str]) -> None:
             busy = text == getattr(sys.modules.get("watch"), "BUSY", None)   # no reload here: this must not raise
             ran = ok and not busy
             if not ran and prev is not None:
-                b.WATCH_STAMP.write_text(prev)
+                _write_stamp(prev)
             w.update(running=False, keys=set(), next_ok=time.time() + (15 if ran else 30 if ok else 600))
 
     threading.Thread(target=go, daemon=True, name="feedback-watch-now").start()
@@ -490,7 +520,7 @@ def state() -> dict:
         watch_at = float(b.WATCH_STAMP.read_text())
     except (OSError, ValueError, AttributeError):
         watch_at = time.time()
-    prs = cached("prs", 120, fetch_prs)
+    prs = cached("prs", 20 if getattr(b, "_dash_prs_rechecking", False) else 120, fetch_prs)   # see fetch_prs
     try:
         steps = cached("steps", 120, fetch_next_steps)
     except Exception:   # no good copy yet either: carry on without the table's text

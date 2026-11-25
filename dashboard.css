@@ -1627,3 +1627,6 @@ section.wait { --edge: var(--info); }
 @media (prefers-reduced-motion: reduce) {
   .dot.run, #ctabs .dot.live, .typing .dots i { animation: none; }
 }
+
+/* a PR GitHub is rechecking after main moved: its last known state, with this mark (owner 2026-11-25) */
+.chip .rechk { opacity: .7; font-size: .95em; }
