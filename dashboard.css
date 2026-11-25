@@ -1609,6 +1609,15 @@ section.wait { --edge: var(--info); }
 #sec-jira-blocked { --edge: var(--bad); }
 #sec-jira-Other { --edge: var(--muted); }
 #list section .card { border-color: color-mix(in srgb, var(--edge, var(--muted)) 22%, var(--line)); padding-left: 18px; }
+/* each section's header and cards sit in one container (owner 2026-11-25), so a card far down a long section still
+   reads as part of it; tinted with the section's colour, like its cards' edges */
+#list section:not(.empty-sec) {
+  border: 1px solid color-mix(in srgb, var(--edge, var(--muted)) 20%, var(--line));
+  border-radius: calc(var(--r) + 4px);
+  padding: 8px 10px 2px;
+  background: color-mix(in srgb, var(--edge, var(--muted)) 3%, transparent);
+}
+#list section.collapsed:not(.empty-sec) { padding-bottom: 8px; }
 #list section.live .card { border-color: color-mix(in srgb, var(--edge) 32%, var(--line)); }
 /* open in the side panel: an outline OUTSIDE the card, so the section's border and stripe keep their own colour
    (owner 2026-11-20: blue and orange blended on a running card that was also open) */
