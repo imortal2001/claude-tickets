@@ -433,6 +433,13 @@ On the Board, every ticket in Jira's review status that isn't being worked on, n
 sits under **Waiting for review**, oldest first. Its wait is counted from your last message in the review thread, or
 from the List's "Sent for review <time>" when the thread can't be read.
 
+When the reviewer only asks you to fix a merge conflict ("please check the conflict again": the message names the
+conflict, has no review report and asks for nothing else), the feedback watch counts it as a **conflict ask**, not
+feedback. The card goes to **Conflict to fix** instead of Action needed, with a "💬 Conflict ask" chip and a
+**Fix the conflict →** button: it sends the conflict prompt in the ticket's chat, so it runs alongside like the chat's
+own conflict prompts, and never starts a Fix Now round. The report channel gets "A merge conflict to fix on <KEY>".
+Once the PR merges cleanly the card says so; your reply in the review thread clears it.
+
 ## Day to day
 
 - **Restart** after changing `bridge.py`, only when nothing is running (a restart cuts off a run):

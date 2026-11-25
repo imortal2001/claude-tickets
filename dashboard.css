@@ -167,6 +167,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 section h2 span { color: var(--faint); font-weight: 500; }
 section.fb h2 { color: var(--warn); display: flex; align-items: center; gap: 7px; }
 section.done h2 { color: var(--ok); display: flex; align-items: center; gap: 7px; }
+section.conflict h2 { color: var(--bad); display: flex; align-items: center; gap: 7px; }
 .todo { grid-column: 1; font-size: 12px; color: var(--ok); }
 section.wait h2 { color: var(--info); display: flex; align-items: center; gap: 7px; }
 .waitline { grid-column: 1; font-size: 12px; color: var(--info); }
@@ -848,6 +849,8 @@ section h2 .n {
 }
 section.fb .card { background: color-mix(in srgb, var(--accent) 4%, var(--panel)); }
 section.done .card { background: color-mix(in srgb, var(--ok) 3%, var(--panel)); }
+section.conflict .card { background: color-mix(in srgb, var(--bad) 3%, var(--panel)); }
+.todo.conflict .i { color: var(--bad); }
 .title { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .key {
   font-weight: 650;
@@ -1574,6 +1577,7 @@ section:not(.empty-sec) > h2 { padding-left: 15px; padding-right: 15px; }
 section.live { border: 0; padding: 0; background: transparent; --edge: var(--accent); }
 section.fb { --edge: var(--accent); }
 section.done { --edge: var(--ok); }
+section.conflict { --edge: var(--bad); }
 section.wait { --edge: var(--info); }
 #list section .card::before {
   left: 5px;

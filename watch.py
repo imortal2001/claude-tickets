@@ -52,6 +52,17 @@ FEEDBACK_RE = re.compile(
     r"|\bfix (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?"
     r"|could you (?:please )?(?:change|fix|update|revise)|pull/\d+#(?:discussion|pullrequestreview|issuecomment)"
     r"|/artifact/|修正|指摘", re.I)
+# A conflict ask (owner 2026-11-25): the reviewer only asks to fix a merge conflict ("please check the conflict again").
+# It is not feedback: the card goes to "Conflict to fix" with a Fix the conflict button, never Fix Now. A message that
+# also asks for other changes, or comes with a review report, stays feedback.
+CONFLICT_ASK_RE = re.compile(r"conflict|コンフリクト|競合", re.I)
+OTHER_ASK_RE = re.compile(
+    r"review the feedback|please (?:fix(?! (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?)|change|update"
+    r"|check (?:the|my) (?:comment|review))|could you (?:please )?(?:change|update|revise)"
+    r"|could you (?:please )?fix(?! (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?)"
+    r"|\b(?:also|and|then) (?:please )?(?:change|fix|update|rename|remove|add|replace)\b"
+    r"(?! (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?)"
+    r"|pull/\d+#(?:discussion|pullrequestreview|issuecomment)|/artifact/|修正|指摘", re.I)
 # The bare word "feedback" decides nothing on its own: "Thanks for fixing the feedback, LGTM" is an approval
 # (code review 2026-11-20). Such messages go through NOT_FEEDBACK_RE, then the short Claude check.
 NOT_FEEDBACK_RE = re.compile(
@@ -513,10 +524,22 @@ def ask_claude(text: str, ts: str = "") -> bool:
     return yes
 
 
+def _has_report(m: dict) -> bool:
+    return any((f.get("name") or "").lower().endswith(".html") for f in m.get("files") or [])
+
+
+def is_conflict_ask(m: dict) -> bool:
+    """The reviewer asks only to fix a merge conflict: it names the conflict, has no report and no other change request."""
+    text = m.get("text") or ""
+    return not _has_report(m) and bool(CONFLICT_ASK_RE.search(text)) and not OTHER_ASK_RE.search(text)
+
+
 def is_feedback(m: dict) -> bool:
     text = m.get("text") or ""
-    if any((f.get("name") or "").lower().endswith(".html") for f in m.get("files") or []):
+    if _has_report(m):
         return True
+    if is_conflict_ask(m):                    # its own to-do: "Conflict to fix"
+        return False
     if FEEDBACK_RE.search(text):              # an explicit request for changes
         return True
     plain = re.sub(r"<[^>]+>|:[a-z0-9_+-]+:", " ", text)
@@ -560,10 +583,14 @@ def _check_ticket(key: str, rows: dict, colids: dict, dry: bool, found: list) ->
     waiting = [x for x in msgs[1:] if not x.get("mine") and not x.get("bot") and d.tsnum(x["ts"]) > owner_last]
     fb = [x for x in waiting if is_feedback(x)]
     new = [x for x in fb if d.tsnum(x["ts"]) > d.tsnum(rec.get("feedback_ts") or "0")]
+    asks = [x for x in waiting if is_conflict_ask(x)]
+    new_asks = [x for x in asks if d.tsnum(x["ts"]) > d.tsnum(rec.get("conflict_ts") or "0")]
     if not dry:
-        save_ticket(key, feedback_open=bool(fb))
+        save_ticket(key, feedback_open=bool(fb), conflict_open=bool(asks))
+    if new_asks and not new:   # feedback in the same round covers it (Fix Now merges main too)
+        _report_conflict_ask(key, ts, new_asks[-1], rows, colids, dry, found)
     if not new:
-        return False
+        return bool(new_asks)
     main = next((x for x in reversed(new) if any((f.get("name") or "").lower().endswith(".html")
                                                   for f in x.get("files") or [])), new[-1])
     n = count_items(main)
@@ -588,6 +615,27 @@ def _check_ticket(key: str, rows: dict, colids: dict, dry: bool, found: list) ->
                                                      f"{f' ({n} items)' if n else ''} — Fix Now → in Claude Tickets"),
                      _cell(colids, "thread", rid, text=f"{key} thread", url=thread_link(ts))], dry)
     return True
+
+
+def _report_conflict_ask(key: str, ts: str, ask: dict, rows: dict, colids: dict, dry: bool, found: list) -> None:
+    """A new conflict ask: a notice in the report channel, the List row, and state.json's conflict_ts (owner 2026-11-25)."""
+    found.append((key, "conflict"))
+    if dry:
+        return
+    link = thread_link(ts, ask["ts"])
+    r = slack_post("chat.postMessage", {
+        "channel": b.CHANNEL, "unfurl_links": False, "text": f"A merge conflict to fix on {key}",
+        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": f"A merge conflict to fix on *{key}*\n<{link}|{link}>"}},
+                   {"type": "context", "elements": [{"type": "mrkdwn", "text": "Click Fix the conflict → in Claude Tickets."}]}]})
+    if not r.get("ok"):
+        b.log.warning("feedback watch: conflict notice for %s not posted: %s", key, r.get("error"))
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    save_ticket(key, conflict_ts=ask["ts"], conflict_reported_at=now, updated=now, thread_ts=ts)
+    row = rows.get(key)
+    if row:
+        list_update([_cell(colids, "waiting", row["id"], select=WF.LIST_WAITING["you"]),
+                     _cell(colids, "next", row["id"], text=f"Conflict to fix {datetime.now():%Y-%m-%d} — Fix the conflict → in Claude Tickets"),
+                     _cell(colids, "thread", row["id"], text=f"{key} thread", url=thread_link(ts))], dry)
 
 
 BUSY = "Another check is running."   # feedback_watch's answer when it did not run: the caller keeps its stamp back
@@ -620,7 +668,8 @@ def feedback_watch(dry: bool = False) -> tuple[bool, str]:
         table = table_sync(dry=dry, tickets=tickets)
         changed = table["added"] or table["changed"] or table["removed"]
         if found:
-            line = "; ".join(f"There's a feedback on {k}{f' ({n} items)' if n else ''}" for k, n in found)
+            line = "; ".join(f"A merge conflict to fix on {k}" if n == "conflict" else
+                             f"There's a feedback on {k}{f' ({n} items)' if n else ''}" for k, n in found)
             line += f" — notice posted to {W.REPORT_NAME}" + ("" if not dry else " (dry run: not posted)")
         else:
             line = "No new feedback."

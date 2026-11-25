@@ -100,12 +100,23 @@ function branchPrompts(t) {
     "(lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what came in and what you ran.", false) : "";
   return conflictPrompts(all) + assets + merge;
 }
+function conflictFixText(prs) {
+  const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
+  return `Fix the merge conflicts in ${which}: in a git worktree of the PR branch, not the main checkout, merge the base branch into the PR branch (no rebase, no force-push), resolve them as the runbook says, check only what the merge touched (lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what you resolved and what you ran.`;
+}
+async function conflictFix(key) {
+  const t = data.tickets.find((x) => x.key === key);
+  const prs = t ? [(t.pr || {}).main, ...((t.pr || {}).stg || [])].filter((p) => p && p.mergeable === "CONFLICTING") : [];
+  if (!prs.length) return toast("The PR has no merge conflict now.");
+  openThread(`${CFG.report}|${t.chat_ts || "new:" + key}`, `${key} · Chat with Claude`);   // the ticket's chat shows it
+  await postReply(conflictFixText(prs), true);
+}
 function conflictPrompts(all) {
   const prs = all.filter((p) => p.mergeable === "CONFLICTING");
   if (!prs.length) return "";
   const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
   const ask = `${which} ${prs.length > 1 ? "have" : "has"} merge conflicts. Which files conflict, and why (what changed on the base branch)? Don't change anything yet; tell me how you would resolve them.`;
-  const fix = `Fix the merge conflicts in ${which}: in a git worktree of the PR branch, not the main checkout, merge the base branch into the PR branch (no rebase, no force-push), resolve them as the runbook says, check only what the merge touched (lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what you resolved and what you ran.`;
+  const fix = conflictFixText(prs);
   // data-side: they start at once alongside another ticket's run, in the ticket's own worktree (owner 2026-11-25)
   return `<button type="button" class="bad" data-side="1" data-q="${esc(ask)}">What conflicts?</button><button type="button" class="bad" data-side="1" data-q="${esc(fix)}">Fix the conflict</button>`;
 }
@@ -198,6 +209,8 @@ function mainAction(t) {
     ? `<button class="primary" data-act="resume" data-key="${k}" title="Continue this session where it stopped">Resume →</button>` : "";
   if (t.feedback.open)
     return `<button class="${resume ? "" : "primary"}" data-act="fix" data-key="${k}">Fix Now →</button>${resume}`;
+  if (t.conflict && t.conflict.open && conflicted(t))   // a conflict ask: the conflict prompt, never Fix Now
+    return `<button class="${resume ? "" : "primary"}" data-conflictfix="${k}" title="Merge main in the ticket's worktree, resolve, push — alongside any running ticket">Fix the conflict →</button>${resume}`;
   if (resume) return resume;
   // A finished run waiting on the owner's merge / reply has nothing to fix, even while Jira still says Dev In Progress
   // (e.g. Jira refused In Review until its "v2 PR" field is filled) — owner report 2026-11-17.
@@ -246,6 +259,12 @@ function replyTodo(t) {
     : `post the review request in ${esc(CFG.reviewName || "the review channel")}`;
   return `✅ ${what} ${esc(t.reply.finished)} → ${merge}${reply}`;
 }
+// A conflict ask's chip opens the reviewer's message, or the thread (owner 2026-11-25).
+function conflictChip(t) {
+  const title = 'title="The reviewer asked to fix the merge conflict. Opens the review thread."';
+  return t.review_thread ? `<button class="chip bad" ${threadAttrs(t)} ${title}>💬 Conflict ask</button>`
+    : `<a class="chip bad" href="${esc(t.conflict.link || "#")}" target="_blank" ${title}>💬 Conflict ask</a>`;
+}
 function card(t) {
   const r = t.run;
   const fb = !t.feedback.open ? ""
@@ -268,13 +287,16 @@ function card(t) {
   return `<div class="card ${r.state === "running" ? "running" : ""}${t.key === openKey ? " open" : ""}" data-key="${esc(t.key)}" ${threadAttrs(t)} ${t.review_thread ? 'title="Click to open the review thread"' : ""}><div class="body">
     <div class="title"><a class="key" href="${CFG.jira}/browse/${esc(t.key)}" target="_blank">${esc(t.key)}</a>
       <span class="summary" title="${esc(t.jira_summary || t.summary)}">${esc(t.summary)}</span></div>
-    <div class="meta">${t._moved ? `<span class="chip status">Jira: ${esc(t.status)}</span>` : ""}${prChips(t.pr)}${fb}${thChip}${
+    <div class="meta">${t._moved ? `<span class="chip status">Jira: ${esc(t.status)}</span>` : ""}${prChips(t.pr)}${fb}${t._conflict ? conflictChip(t) : thChip}${
       t._wait && waitSince(t) ? `<span class="chip wait" title="Waiting for the reviewer since ${esc(t.review_turn.time)}">${IC.clock}${waitAge(waitSince(t))} wait</span>` : ""}</div>
     ${r.state === "running" && r.activity ? `<div class="activity">${esc(r.activity)}</div>` : ""}
     ${r.state !== "running" && w && w.state === "working" && w.last ? `<div class="activity">${esc(w.last)}</div>` : ""}
     <div class="details">
       <div><span class="i ${r.state === "finished" ? "ok" : ""}">${({finished: IC.check, running: IC.play, queued: IC.dots, stopped: IC.stop, failed: IC.alert, ended_turn: IC.question})[r.state] || IC.dots}</span><span>${runLine(t).replace(/^(✅|⏹|⚠️|ℹ️|⏳|•)\s*/, "")}</span></div>
       ${t._reply ? `<div class="todo"><span class="i ok">${IC.check}</span><span>${replyTodo(t).replace(/^✅\s*/, "")}</span></div>` : ""}
+      ${t._conflict ? `<div class="todo conflict"><span class="i">${IC.alert}</span><span>${conflicted(t)
+        ? "The reviewer asks to fix the merge conflict: Fix the conflict → (no Fix Now needed)"
+        : "The PR merges cleanly now: reply in the review thread to clear this"}</span></div>` : ""}
       ${t._wait ? `<div class="waitline"><span class="i">${IC.hourglass}</span>${t.review_thread ? `<button class="rowlink" ${threadAttrs(t)} title="Open the review thread">` : "<span>"}${
         waitSince(t) ? `Sent for review ${esc(t.review_turn.time)} · waiting ${waitAge(waitSince(t))} for the reviewer` : `${esc(ST().review)} · waiting for the reviewer`}${t.review_thread ? "</button>" : "</span>"}</div>` : ""}
       ${t.next_step ? `<div class="next"><span class="i">${IC.arrow}</span><span><span class="lbl">Next:</span> <span class="val">${esc(t.next_step)}</span></span></div>` : ""}
@@ -428,13 +450,15 @@ function render() {
 // The board's buckets (also counted in the sidebar). Same rules as before the 2026-11-20 redesign.
 function classify(rows) {
   const isLive = (t) => ["running", "queued"].includes(t.run.state) || t.elsewhere.some((s) => s.state === "working");
-  const replyDue = (t) => !isLive(t) && !t.feedback.open && t.reply && t.reply.needed;
+  // The reviewer only asked to fix a merge conflict (owner 2026-11-25): its own section, not changes requested.
+  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && !!(t.conflict && t.conflict.open);
+  const replyDue = (t) => !isLive(t) && !t.feedback.open && !conflictAsk(t) && t.reply && t.reply.needed;
   // Every Jira In Review ticket that isn't being worked on, needing changes or needing a reply waits on the reviewer
   // (owner 2026-11-23: no separate "In Review" group, also when the review thread can't be read).
-  const reviewWait = (t) => t.status === ST().review && !isLive(t) && !t.feedback.open && !replyDue(t);
-  return {isLive, replyDue, reviewWait,
+  const reviewWait = (t) => t.status === ST().review && !isLive(t) && !t.feedback.open && !conflictAsk(t) && !replyDue(t);
+  return {isLive, conflictAsk, replyDue, reviewWait,
     live: rows.filter(isLive), waiting: rows.filter((t) => !isLive(t) && t.feedback.open),
-    toReply: rows.filter(replyDue), waitingReview: rows.filter(reviewWait)};
+    conflicts: rows.filter(conflictAsk), toReply: rows.filter(replyDue), waitingReview: rows.filter(reviewWait)};
 }
 const conflicted = (t) => t.pr && t.pr.main && t.pr.main.mergeable === "CONFLICTING";
 // The visible tickets and their buckets, worked out once per poll and shared by the sidebar and the stat cards.
@@ -459,18 +483,19 @@ function sidebar() {
   const {rows, c} = visibleClassified();
   const withPr = rows.filter((t) => t.pr && t.pr.main), ok = withPr.filter((t) => t.pr.main.mergeable === "MERGEABLE").length;
   const bad = withPr.filter(conflicted).length, pct = withPr.length ? Math.round(ok / withPr.length * 100) : 0;
-  $("cnt-board").textContent = c.live.length + c.waiting.length + c.toReply.length + c.waitingReview.length || "";
+  $("cnt-board").textContent = c.live.length + c.waiting.length + c.conflicts.length + c.toReply.length + c.waitingReview.length || "";
   $("cnt-table").textContent = rows.length;
   // One line per status, in board order (owner 2026-11-20); a click jumps to that section on the board. The review
   // status has no line (owner 2026-11-24): its tickets are all in the sections above, under Waiting for review at
   // the least. Like "Other", it shows only if a ticket ever lands there.
-  const rest = rows.filter((t) => !c.isLive(t) && !t.feedback.open && !c.replyDue(t) && !c.reviewWait(t));
+  const rest = rows.filter((t) => !c.isLive(t) && !t.feedback.open && !c.conflictAsk(t) && !c.replyDue(t) && !c.reviewWait(t));
   const jiraCount = (st) => rest.filter((t) => (ORDER.includes(t.status) ? t.status : "Other") === st).length;
   const line = (sec, color, label, n, pulse) => `<button type="button" class="qline${n ? "" : " zero"}" data-goto-sec="${sec}">
       <span class="dot${pulse && n ? " run" : ""}" style="background:${color}"></span><span>${esc(label)}</span><b>${n}</b></button>`;
   $("qsummary").innerHTML = `<div class="sh">Queue summary <i>Live</i></div><div class="qlist">${
     line("sec-live", "var(--accent)", "In progress", c.live.length, true)}${
     line("sec-fb", "var(--accent)", "Action needed", c.waiting.length)}${
+    line("sec-conflict", "var(--bad)", "Conflict to fix", c.conflicts.length)}${
     line("sec-done", "var(--ok)", "Reply needed", c.toReply.length)}${
     line("sec-wait", "var(--info)", "Waiting for review", c.waitingReview.length)}</div>
     <div class="qsub">By Jira status</div><div class="qlist">${
@@ -516,7 +541,7 @@ function renderView() {
   const rows = data.tickets.filter((t) =>
     (!hide || !isHidden(t)) &&
     (!q || (t.key + " " + t.summary).toLowerCase().includes(q)));
-  const c = classify(rows), {isLive, replyDue, reviewWait} = c;
+  const c = classify(rows), {isLive, conflictAsk, replyDue, reviewWait} = c;
   // 1) In progress: Claude is working on it now. 2) Feedback waiting: a reviewer asked for changes and nothing has
   // been done on our side yet ("Action needed: changes requested"). 3) Everything else, grouped by its Jira status.
   // In start order (owner 2026-11-25): the runs, first started on top; then the queued ones in queue order; then
@@ -527,12 +552,13 @@ function renderView() {
     .sort((a, b) => liveRank(a) - liveRank(b) || (a.run.since || Infinity) - (b.run.since || Infinity)
       || queuePos(a) - queuePos(b) || a.key.localeCompare(b.key));
   const waiting = c.waiting.map((t) => ({...t, _moved: true})).sort((a, b) => a.key.localeCompare(b.key));
+  const conflicts = c.conflicts.map((t) => ({...t, _moved: true, _conflict: true})).sort((a, b) => a.key.localeCompare(b.key));
   const toReply = c.toReply.map((t) => ({...t, _moved: true, _reply: true})).sort((a, b) => a.key.localeCompare(b.key));
   // The reviewer's turn: the newest message in the review thread is ours.
   const waitingReview = c.waitingReview.map((t) => ({...t, _moved: true, _wait: true}))
     .sort((a, b) => (waitSince(a) || Infinity) - (waitSince(b) || Infinity));
   const groups = {};
-  for (const t of rows.filter((x) => !isLive(x) && !x.feedback.open && !replyDue(x) && !reviewWait(x))) (groups[ORDER.includes(t.status) ? t.status : "Other"] ||= []).push(t);
+  for (const t of rows.filter((x) => !isLive(x) && !x.feedback.open && !conflictAsk(x) && !replyDue(x) && !reviewWait(x))) (groups[ORDER.includes(t.status) ? t.status : "Other"] ||= []).push(t);
   const names = [...ORDER, "Other"].filter((g) => groups[g]);
   // The chevron at the right end of a section's header collapses it to that header (owner 2026-11-24).
   // While the filter box has text, every section shows its matches, collapsed or not.
@@ -553,6 +579,8 @@ function renderView() {
     "Nothing is being worked on right now.", queueNext);
   const fbSection = section("fb", "sec-fb", `<span class="ico">${IC.alert}</span>`, "Action needed: changes requested", waiting,
     "No requested changes need action.");
+  const conflictSection = section("conflict", "sec-conflict", `<span class="ico">${IC.alert}</span>`, "Conflict to fix", conflicts,
+    "No merge conflicts to fix.");
   const doneSection = section("done", "sec-done", `<span class="ico">${IC.check}</span>`, "Fixed: reply to the reviewer", toReply,
     "No replies due — every finished fix has been answered.");
   const waitSection = section("wait", "sec-wait", `<span class="ico">${IC.clock}</span>`, "Waiting for review", waitingReview,
@@ -562,8 +590,8 @@ function renderView() {
       names.map((g) => `<section id="${esc(jiraSecId(g))}" class="${secCls(jiraSecId(g)).trim()}">${head("", g, groups[g].length, jiraSecId(g))}${groups[g].sort((a, b) => a.key.localeCompare(b.key)).map(card).join("")}</section>`).join("")
     : "";
   const anchor = listAnchor();
-  $("list").innerHTML = liveSection + fbSection + doneSection + waitSection +
-    (jira || (live.length || waiting.length || toReply.length || waitingReview.length ? "" : `<div class="empty">No tickets match.</div>`));
+  $("list").innerHTML = liveSection + fbSection + conflictSection + doneSection + waitSection +
+    (jira || (live.length || waiting.length || conflicts.length || toReply.length || waitingReview.length ? "" : `<div class="empty">No tickets match.</div>`));
   restoreAnchor(anchor);
 }
 
@@ -1211,6 +1239,7 @@ document.addEventListener("click", (e) => {
     return;
   }
   if (el.dataset.act) act(el.dataset.act, el.dataset.key);
+  else if (el.dataset.conflictfix) conflictFix(el.dataset.conflictfix);
   else if (el.dataset.log) openLog(el.dataset.log, el.dataset.name);
   else if (el.dataset.thread) openThread(el.dataset.thread, el.dataset.name);
   else if (el.dataset.decide) openDecision();
