@@ -53,9 +53,15 @@ FEEDBACK_RE = re.compile(
     r"|could you (?:please )?(?:change|fix|update|revise)|pull/\d+#(?:discussion|pullrequestreview|issuecomment)"
     r"|/artifact/|修正|指摘", re.I)
 # A conflict ask (owner 2026-11-25): the reviewer only asks to fix a merge conflict ("please check the conflict again").
-# It is not feedback: the card goes to "Conflict to fix" with a Fix the conflict button, never Fix Now. A message that
+# It is not feedback: the card goes to "Conflict to fix" with a Resolve Now button, never Fix Now. A message that
 # also asks for other changes, or comes with a review report, stays feedback.
 CONFLICT_ASK_RE = re.compile(r"conflict|コンフリクト|競合", re.I)
+# ...and asks for something: "please", "could you", "fix / resolve the conflict", "take / merge main". Without one,
+# "Thanks for fixing the conflict, merged" is a closing note, not a conflict to fix (code review 2026-11-25).
+ASK_MARKER_RE = re.compile(
+    r"\b(?:please|could you|can you|would you|kindly)\b|お願い|ください"
+    r"|\b(?:fix|resolve) (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?"
+    r"|\btake (?:the )?main\b|\bmerge main\b|\bmain into (?:this|the|your) branch", re.I)
 OTHER_ASK_RE = re.compile(
     r"review the feedback|please (?:fix(?! (?:the |this |these |that |those |all (?:the )?)?(?:merge )?conflicts?)|change|update"
     r"|check (?:the|my) (?:comment|review))|could you (?:please )?(?:change|update|revise)"
@@ -531,7 +537,8 @@ def _has_report(m: dict) -> bool:
 def is_conflict_ask(m: dict) -> bool:
     """The reviewer asks only to fix a merge conflict: it names the conflict, has no report and no other change request."""
     text = m.get("text") or ""
-    return not _has_report(m) and bool(CONFLICT_ASK_RE.search(text)) and not OTHER_ASK_RE.search(text)
+    return (not _has_report(m) and bool(CONFLICT_ASK_RE.search(text)) and bool(ASK_MARKER_RE.search(text))
+            and not OTHER_ASK_RE.search(text))
 
 
 def is_feedback(m: dict) -> bool:
@@ -591,8 +598,7 @@ def _check_ticket(key: str, rows: dict, colids: dict, dry: bool, found: list) ->
         _report_conflict_ask(key, ts, new_asks[-1], rows, colids, dry, found)
     if not new:
         return bool(new_asks)
-    main = next((x for x in reversed(new) if any((f.get("name") or "").lower().endswith(".html")
-                                                  for f in x.get("files") or [])), new[-1])
+    main = next((x for x in reversed(new) if _has_report(x)), new[-1])
     n = count_items(main)
     link = thread_link(ts, main["ts"])
     found.append((key, n))
@@ -626,7 +632,7 @@ def _report_conflict_ask(key: str, ts: str, ask: dict, rows: dict, colids: dict,
     r = slack_post("chat.postMessage", {
         "channel": b.CHANNEL, "unfurl_links": False, "text": f"A merge conflict to fix on {key}",
         "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": f"A merge conflict to fix on *{key}*\n<{link}|{link}>"}},
-                   {"type": "context", "elements": [{"type": "mrkdwn", "text": "Click Fix the conflict → in Claude Tickets."}]}]})
+                   {"type": "context", "elements": [{"type": "mrkdwn", "text": "Click Resolve Now → in Claude Tickets."}]}]})
     if not r.get("ok"):
         b.log.warning("feedback watch: conflict notice for %s not posted: %s", key, r.get("error"))
     now = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -634,7 +640,7 @@ def _report_conflict_ask(key: str, ts: str, ask: dict, rows: dict, colids: dict,
     row = rows.get(key)
     if row:
         list_update([_cell(colids, "waiting", row["id"], select=WF.LIST_WAITING["you"]),
-                     _cell(colids, "next", row["id"], text=f"Conflict to fix {datetime.now():%Y-%m-%d} — Fix the conflict → in Claude Tickets"),
+                     _cell(colids, "next", row["id"], text=f"Conflict to fix {datetime.now():%Y-%m-%d} — Resolve Now → in Claude Tickets"),
                      _cell(colids, "thread", row["id"], text=f"{key} thread", url=thread_link(ts))], dry)
 
 

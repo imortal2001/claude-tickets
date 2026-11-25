@@ -1,10 +1,11 @@
 """The Claude Tickets bridge: the background service behind the dashboard.
 
 It checks Jira for the owner's tickets, runs one Claude Code session at a time for the dashboard's buttons (Migrate,
-Fix Now, Review, Resume, Chat; the rest queue; a chat's conflict fix may run alongside, in a second slot), listens to Slack over Socket Mode (outbound, no public URL) for the
-review threads, and serves the dashboard (dashboard.py). The feedback watch and the Slack List sync are in watch.py.
-Each session keeps all its detail; the app shows its chat and the final report. A reply in a run's Slack thread, when
-Slack run reports are on, is passed to that session (claude --resume).
+Fix Now, Review, Resume, Chat; the rest queue; a chat's conflict fix may run alongside, in a second slot), listens
+to Slack over Socket Mode (outbound, no public URL) for the review threads, and serves the dashboard (dashboard.py).
+The feedback watch and the Slack List sync are in watch.py. Each session keeps all its detail; the app shows its
+chat and the final report. A reply in a run's Slack thread, when Slack run reports are on, is passed to that session
+(claude --resume).
 """
 
 from __future__ import annotations
@@ -151,8 +152,8 @@ FIX_PROMPT = workflow.prompt("fix")
 
 jobs: "queue.Queue[dict]" = queue.Queue()
 current: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
-# A second run slot (owner decision 2026-11-25): a merge-only conflict fix ("Fix the conflict" / "What conflicts?"
-# in the chat) starts at once while another ticket runs, instead of waiting behind it. It works in the ticket's own
+# A second run slot (owner decision 2026-11-25): a merge-only conflict fix (the card's "Resolve Now" or the chat's
+# branch prompts) starts at once while another ticket runs, instead of waiting behind it. It works in the ticket's own
 # worktree (the runbook's rule E), so the two never share a checkout. Everything else still runs one at a time.
 side: dict = {"proc": None, "key": None, "thread_ts": None, "since": None}
 side_jobs: "queue.Queue[dict]" = queue.Queue()

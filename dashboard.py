@@ -412,6 +412,11 @@ def is_conflict_run(ts: str, entry: dict) -> bool:
     return bool(mine) and bool(CONFLICT_RE.match(mine[-1]))
 
 
+def queue_labels(key: str) -> tuple:
+    """Every label a ticket's queued job can carry (the header's Queued list; Stop and Resume look them up)."""
+    return key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)"
+
+
 def running_slots() -> dict:
     """{KEY: copy of its run slot} for every ticket running now: the main slot, and the side slot of a conflict fix
     started alongside it (owner 2026-11-25)."""
@@ -519,7 +524,7 @@ def state() -> dict:
         # Chat → opens the last session's conversation with its messages (owner, 2026-11-16): the newest
         # conversation of any kind — a New chat, or the last migrate / fix run (replies continue that session).
         chat_ts = runs[0]["thread_ts"] if runs else None
-        queued = any(label in waiting for label in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)"))
+        queued = any(label in waiting for label in queue_labels(key))
         digits = key.split("-", 1)[1]
         elsewhere = [s for s in live if re.search(rf"(?<!\d){digits}(?!\d)", (s.get("title") or "") + " " + (s.get("cwd") or ""))
                      or (s.get("branch") == key)]
@@ -804,6 +809,8 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
             return False, busy
         position = b.queue_fix(client, key, "", **({"override": override} if override else {}))
         if position < 0:
+            if (getattr(b, "side", None) or {}).get("key") == key:
+                return False, f"{key}'s conflict fix is running; Fix Now can start when it finishes."
             return False, f"Already fixing {key}."
         # queue_fix does not hand back its thread: it is this ticket's newest queued fix thread
         with b._state_lock:
@@ -833,7 +840,7 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
             if proc and proc.poll() is None:
                 proc.terminate()
                 return True, f"Stopping {key}…"
-        labels = (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)")
+        labels = queue_labels(key)
         for label in labels:
             for waiting_list in (b.waiting, getattr(b, "side_waiting", [])):
                 if label in waiting_list:
@@ -844,10 +851,11 @@ def act(action: str, key: str, override: dict | None = None) -> tuple:
         # A queued job no waiting list names (about to start, or removed before 2026-11-25 and still queued)
         if any(_drop_queued(label) for label in labels):
             return True, f"Removed {key} from the queue."
+        if run and run.get("kind") == "compact":   # the short summarising pass after a Stop can't be stopped itself
+            return False, f"{key} has stopped; its session is being compacted and finishes in about a minute."
         return False, f"{key} is not running or queued."
     if action == "resume":
-        if key in running_slots() or any(l in b.waiting + list(getattr(b, "side_waiting", []))
-                                          for l in (key, f"{key} (fix)", f"{key} (review)", f"{key} (resume)", f"{key} (conflict)")):
+        if key in running_slots() or any(l in b.waiting + list(getattr(b, "side_waiting", [])) for l in queue_labels(key)):
             return False, f"{key} is already queued or running."
         with b._state_lock:
             threads = b.load_state()["threads"]

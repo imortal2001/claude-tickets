@@ -394,8 +394,8 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
 - **Otherwise:** it's a conversation about the ticket. A question gets an answer with evidence, not new work; if
   the answer shows a required step was skipped, Claude offers to do it ("Option 1 (recommended) …") and waits for
   you. An instruction gets done, following the same runbook rules. It doesn't post to Slack itself. Ready-made prompts are sent as soon as you click them: **What's left?**, **Status summary**
-  and **Explain the report**. For the PR branch: **What conflicts?** and **Fix the conflict** when the PR has merge
-  conflicts, **Rebuild assets** when its asset build failed (usually the branch lacks main's front-end changes), and
+  and **Explain the report**. For the PR branch: **What conflicts?** when the PR has merge conflicts (the fix is the
+  card's **Resolve Now →** in Conflict to fix), **Rebuild assets** when its asset build failed (usually the branch lacks main's front-end changes), and
   **Merge main** when the PR into main has no conflicts (a reviewer's "take main in"). These branch prompts start at
   once even while another ticket is running: they take a second run slot ("Alongside" in the header) and work in
   the ticket's own git worktree, so they never touch the checkout the other run uses. With nothing running they take
@@ -436,8 +436,8 @@ from the List's "Sent for review <time>" when the thread can't be read.
 When the reviewer only asks you to fix a merge conflict ("please check the conflict again": the message names the
 conflict, has no review report and asks for nothing else), the feedback watch counts it as a **conflict ask**, not
 feedback. The card goes to **Conflict to fix** instead of Action needed, with a "💬 Conflict ask" chip and a
-**Fix the conflict →** button: it sends the conflict prompt in the ticket's chat, so it runs alongside like the chat's
-own conflict prompts, and never starts a Fix Now round. The report channel gets "A merge conflict to fix on <KEY>".
+**Resolve Now →** button: it sends the conflict prompt in the ticket's chat, so it runs alongside like the chat's
+branch prompts, and never starts a Fix Now round. The report channel gets "A merge conflict to fix on <KEY>".
 A ticket whose PR into main conflicts goes there too, asked about or not ("PR #N conflicts with main, so it can't
 merge"), unless it is running, has real feedback (then Fix Now merges main as part of the round), or is Blocked (it stays
 in its Blocked group until it is unblocked). Once GitHub says the

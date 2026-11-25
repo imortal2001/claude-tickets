@@ -80,7 +80,8 @@ function syncReplyHint() {
 }
 // Quick prompts for the ticket's PR branch, first in the row; like the others they are sent on click, and they run
 // alongside another ticket's run, in the ticket's own worktree (data-side, owner 2026-11-25):
-// - merge conflicts (2026-11-24): "What conflicts?" (answered, nothing changed) and "Fix the conflict";
+// - merge conflicts: "What conflicts?" (answered, nothing changed); the fix is the card's "Resolve Now →"
+//   in Conflict to fix (owner 2026-11-25: one button for it, not two);
 // - a failed asset build: "Rebuild assets" (usually: the branch lacks main's front-end changes);
 // - a main PR without conflicts: "Merge main" (the reviewer's "take main in").
 function branchPrompts(t) {
@@ -116,9 +117,8 @@ function conflictPrompts(all) {
   if (!prs.length) return "";
   const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
   const ask = `${which} ${prs.length > 1 ? "have" : "has"} merge conflicts. Which files conflict, and why (what changed on the base branch)? Don't change anything yet; tell me how you would resolve them.`;
-  const fix = conflictFixText(prs);
-  // data-side: they start at once alongside another ticket's run, in the ticket's own worktree (owner 2026-11-25)
-  return `<button type="button" class="bad" data-side="1" data-q="${esc(ask)}">What conflicts?</button><button type="button" class="bad" data-side="1" data-q="${esc(fix)}">Fix the conflict</button>`;
+  // data-side: it starts at once alongside another ticket's run (owner 2026-11-25)
+  return `<button type="button" class="bad" data-side="1" data-q="${esc(ask)}">What conflicts?</button>`;
 }
 function syncRunPick() {
   const s = data && data.run_settings;
@@ -210,7 +210,7 @@ function mainAction(t) {
   if (t.feedback.open)
     return `<button class="${resume ? "" : "primary"}" data-act="fix" data-key="${k}">Fix Now →</button>${resume}`;
   if (t._conflict && conflicted(t))   // Conflict to fix: the conflict prompt, never Fix Now
-    return `<button class="${resume ? "" : "primary"}" data-conflictfix="${k}" title="Merge main in the ticket's worktree, resolve, push — alongside any running ticket">Fix the conflict →</button>${resume}`;
+    return `<button class="${resume ? "" : "primary"}" data-conflictfix="${k}" title="Merge main in the ticket's worktree, resolve, push — alongside any running ticket">Resolve Now →</button>${resume}`;
   if (resume) return resume;
   // A finished run waiting on the owner's merge / reply has nothing to fix, even while Jira still says Dev In Progress
   // (e.g. Jira refused In Review until its "v2 PR" field is filled) — owner report 2026-11-17.
@@ -299,8 +299,8 @@ function card(t) {
       <div><span class="i ${r.state === "finished" ? "ok" : ""}">${({finished: IC.check, running: IC.play, queued: IC.dots, stopped: IC.stop, failed: IC.alert, ended_turn: IC.question})[r.state] || IC.dots}</span><span>${runLine(t).replace(/^(✅|⏹|⚠️|ℹ️|⏳|•)\s*/, "")}</span></div>
       ${t._reply ? `<div class="todo"><span class="i ok">${IC.check}</span><span>${replyTodo(t).replace(/^✅\s*/, "")}</span></div>` : ""}
       ${t._conflict ? `<div class="todo conflict"><span class="i">${IC.alert}</span><span>${conflicted(t)
-        ? (t.conflict && t.conflict.open ? "The reviewer asks to fix the merge conflict: Fix the conflict → (no Fix Now needed)"
-          : `PR #${t.pr.main.number} conflicts with main, so it can't merge: Fix the conflict →`)
+        ? (t.conflict && t.conflict.open ? "The reviewer asks to fix the merge conflict: Resolve Now → (no Fix Now needed)"
+          : `PR #${t.pr.main.number} conflicts with main, so it can't merge: Resolve Now →`)
         : "GitHub is still checking whether the PR merges cleanly"}</span></div>` : ""}
       ${t._wait ? `<div class="waitline"><span class="i">${IC.hourglass}</span>${t.review_thread ? `<button class="rowlink" ${threadAttrs(t)} title="Open the review thread">` : "<span>"}${
         waitSince(t) ? `Sent for review ${esc(t.review_turn.time)} · waiting ${waitAge(waitSince(t))} for the reviewer` : `${esc(ST().review)} · waiting for the reviewer`}${t.review_thread ? "</button>" : "</span>"}</div>` : ""}
