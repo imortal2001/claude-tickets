@@ -460,7 +460,9 @@ function classify(rows) {
   // needs your reply ("Fixed: reply"); an unasked one simply goes back to waiting for the reviewer.
   const asked = (t) => !!(t.conflict && t.conflict.open);
   const clean = (t) => !!(t.pr && t.pr.main && t.pr.main.mergeable === "MERGEABLE");
-  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && (conflicted(t) || (asked(t) && !clean(t)));
+  // A Blocked ticket's conflict waits until it is unblocked: it stays in its Blocked group (owner 2026-11-25).
+  const conflictAsk = (t) => !isLive(t) && !t.feedback.open && t.status !== ST().blocked
+    && (conflicted(t) || (asked(t) && !clean(t)));
   const conflictFixed = (t) => !isLive(t) && !t.feedback.open && asked(t) && clean(t);
   const replyDue = (t) => !isLive(t) && !t.feedback.open && !conflictAsk(t) && ((t.reply && t.reply.needed) || conflictFixed(t));
   // Every Jira In Review ticket that isn't being worked on, needing changes or needing a reply waits on the reviewer
