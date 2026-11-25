@@ -229,6 +229,9 @@ The app knows no team's process by itself. You describe yours in three places:
      `review` (waiting for the reviewer), `blocked`, `released`. The board groups, colours and buttons follow the roles.
    - `jira.jql`: which tickets are yours. `jira.board_order`: the board's status groups, top to bottom.
      `jira.watch_issue_types`: issue types the feedback watch reads (empty = all).
+   - `github.asset_build_check`: the name of the PR check that builds your page assets, if you have one. When its
+     newest run on one of your PRs fails, the card shows "⚠ #N assets build failed" and the chat offers
+     **Rebuild assets**. Empty = off.
    - `reports`: the words your runs start their final report with (`is migrated`, `is fixed`, `is reviewed: clean`, …)
      and its `Status:` / `Staging PR:` lines. The app reads the reports by these words, so your runbook must use them.
    - `list_options`: your Slack List's option keys for its Status and Waiting on columns, and the labels shown.
@@ -391,7 +394,9 @@ You then merge and deploy staging and reply in the thread. The watch sees your r
 - **Otherwise:** it's a conversation about the ticket. A question gets an answer with evidence, not new work; if
   the answer shows a required step was skipped, Claude offers to do it ("Option 1 (recommended) …") and waits for
   you. An instruction gets done, following the same runbook rules. It doesn't post to Slack itself. Ready-made prompts are sent as soon as you click them: **What's left?**, **Status summary**
-  and **Explain the report**, plus **What conflicts?** and **Fix the conflict** when the ticket's PR has merge conflicts. These two start at
+  and **Explain the report**. For the PR branch: **What conflicts?** and **Fix the conflict** when the PR has merge
+  conflicts, **Rebuild assets** when its asset build failed (usually the branch lacks main's front-end changes), and
+  **Merge main** when the PR into main has no conflicts (a reviewer's "take main in"). These branch prompts start at
   once even while another ticket is running: they take a second run slot ("Alongside" in the header) and work in
   the ticket's own git worktree, so they never touch the checkout the other run uses. With nothing running they take
   the normal slot. One that has to wait shows in the header's Queued list as `<KEY> (conflict)`, Stop removes it, and

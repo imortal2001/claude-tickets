@@ -108,17 +108,45 @@ def fetch_prs() -> dict:
         prs = json.loads(raw or "[]")
     except (subprocess.SubprocessError, json.JSONDecodeError):
         return out
+    assets = fetch_asset_checks()
     for pr in prs:
         found = {f"NJ-{n}" for n in re.findall(r"(?i)nj[-_ ]?(\d{5,6})", pr.get("title", "") + " " + pr.get("headRefName", ""))}
         for key in found:
             slot = out.setdefault(key, {"main": None, "stg": []})
             item = {"number": pr["number"], "url": pr["url"], "mergeable": pr.get("mergeable"),
-                    "draft": pr.get("isDraft"), "base": pr.get("baseRefName")}
+                    "draft": pr.get("isDraft"), "base": pr.get("baseRefName"), "assets": assets.get(pr["number"])}
             if pr.get("baseRefName") == "main":
                 if not slot["main"] or pr["number"] > slot["main"]["number"]:
                     slot["main"] = item
             else:
                 slot["stg"].append(item)
+    return out
+
+
+def fetch_asset_checks() -> dict:
+    """{PR number: {"state": "failed" | "running" | "ok", "url": the run}} from the newest run of the workflow's
+    asset-build check on the owner's open PRs (owner 2026-11-25: a failed build had no button to fix it). {} when the
+    team has no such check or GitHub can't be read."""
+    if not WF.ASSET_CHECK:
+        return {}
+    try:
+        raw = subprocess.run(["gh", "pr", "list", "--repo", W.GH_REPO, "--state", "open", "--author", "@me",
+                              "--limit", "100", "--json", "number,statusCheckRollup"],
+                             capture_output=True, text=True, timeout=60).stdout
+        prs = json.loads(raw or "[]")
+    except (subprocess.SubprocessError, json.JSONDecodeError):
+        return {}
+    out = {}
+    for pr in prs:
+        runs = [c for c in pr.get("statusCheckRollup") or []
+                if (c.get("name") or c.get("context") or "").lower() == WF.ASSET_CHECK.lower()]
+        runs = [c for c in runs if c.get("conclusion") != "SKIPPED"]   # a skipped run says nothing about the build
+        if not runs:
+            continue
+        last = max(runs, key=lambda c: c.get("startedAt") or c.get("completedAt") or "")
+        state = ("running" if (last.get("status") or "").upper() != "COMPLETED" else
+                 "failed" if last.get("conclusion") in ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED") else "ok")
+        out[pr["number"]] = {"state": state, "url": last.get("detailsUrl")}
     return out
 
 
@@ -371,7 +399,7 @@ def _drop_queued(label: str) -> dict | None:
     return None
 
 
-CONFLICT_RE = re.compile(r"(Fix the merge conflicts in |PR #\d+ .{0,80}merge conflicts\. Which files)")
+CONFLICT_RE = re.compile(r"(Fix the merge conflicts in |PR #\d+ .{0,80}merge conflicts\. Which files|Rebuild the assets of |Merge main into PR #)")
 
 
 def is_conflict_run(ts: str, entry: dict) -> bool:

@@ -33,6 +33,9 @@
     "plan_go": "— go",
     "plan_no_api": "needs a new API"
   },
+  "github": {
+    "asset_build_check": ""
+  },
   "hide": {
     "marker": "",
     "label": "hidden tickets"

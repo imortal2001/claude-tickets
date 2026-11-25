@@ -75,13 +75,33 @@ function syncReplyHint() {
   $("replytext").placeholder = working ? "Add info while Claude works — it gets it after its next step…" : "Reply to Claude…";
   $("replyhint").textContent = working ? "↩ to send · ⇧↩ new line · added to the running session without stopping it"
                                        : "↩ to send · ⇧↩ new line · continues this ticket's Claude session";
-  const qc = conflictPrompts(data.tickets.find((t) => t.key === key)), el = $("qconflict");
+  const qc = branchPrompts(data.tickets.find((t) => t.key === key)), el = $("qconflict");
   if (el.dataset.sig !== qc) { el.dataset.sig = qc; el.innerHTML = qc; }   // a refresh never swaps a button mid-click
 }
-// A ticket whose PR has merge conflicts gets two more quick prompts, first in the row (owner request 2026-11-24):
-// a question (answered, nothing changed) and the fix. Like the others they are sent on click.
-function conflictPrompts(t) {
-  const prs = t ? [(t.pr || {}).main, ...((t.pr || {}).stg || [])].filter((p) => p && p.mergeable === "CONFLICTING") : [];
+// Quick prompts for the ticket's PR branch, first in the row; like the others they are sent on click, and they run
+// alongside another ticket's run, in the ticket's own worktree (data-side, owner 2026-11-25):
+// - merge conflicts (2026-11-24): "What conflicts?" (answered, nothing changed) and "Fix the conflict";
+// - a failed asset build: "Rebuild assets" (usually: the branch lacks main's front-end changes);
+// - a main PR without conflicts: "Merge main" (the reviewer's "take main in").
+function branchPrompts(t) {
+  if (!t) return "";
+  const all = [(t.pr || {}).main, ...((t.pr || {}).stg || [])].filter(Boolean);
+  const btn = (label, q, bad = true) => `<button type="button"${bad ? ' class="bad"' : ""} data-side="1" data-q="${esc(q)}">${label}</button>`;
+  const assets = all.filter((p) => p.assets && p.assets.state === "failed").map((p) => btn("Rebuild assets",
+    `Rebuild the assets of PR #${p.number} (into ${p.base || "its base branch"}): its asset build failed (${p.assets.url || "see the PR's checks"}). ` +
+    "Read why first. If it says the branch lacks the base branch's front-end changes, take the base branch in: in a git " +
+    "worktree of the PR branch, not the main checkout, merge it into the PR branch (no rebase, no force-push), check only " +
+    "what the merge touched (no full test suites), and push; the push rebuilds the assets. If it failed for another " +
+    "reason, change nothing: tell me why and how you would fix it.")).join("");
+  const main = (t.pr || {}).main;
+  const merge = main && main.mergeable !== "CONFLICTING" ? btn("Merge main",
+    `Merge main into PR #${main.number}'s branch: in a git worktree of the PR branch, not the main checkout, merge main ` +
+    "into it (no rebase, no force-push), resolve any conflicts as the runbook says, check only what the merge touched " +
+    "(lint, and the tests for conflicted code files; no full test suites), and push. Then tell me what came in and what you ran.", false) : "";
+  return conflictPrompts(all) + assets + merge;
+}
+function conflictPrompts(all) {
+  const prs = all.filter((p) => p.mergeable === "CONFLICTING");
   if (!prs.length) return "";
   const which = prs.map((p) => `PR #${p.number} (into ${p.base || "its base branch"})`).join(" and ");
   const ask = `${which} ${prs.length > 1 ? "have" : "has"} merge conflicts. Which files conflict, and why (what changed on the base branch)? Don't change anything yet; tell me how you would resolve them.`;
@@ -150,6 +170,9 @@ function prChips(pr) {
     out.push(`<a class="chip ${cls}" href="${esc(pr.main.url)}" target="_blank">PR #${pr.main.number} · ${word}</a>`);
   } else out.push(`<span class="chip">no PR</span>`);
   for (const s of (pr && pr.stg) || []) out.push(`<a class="chip info" href="${esc(s.url)}" target="_blank">stg #${s.number} open</a>`);
+  // A failed asset build (owner 2026-11-25): it blocks the merge, and the chat's "Rebuild assets" fixes it.
+  for (const p of [pr && pr.main, ...((pr && pr.stg) || [])].filter((p) => p && p.assets && p.assets.state === "failed"))
+    out.push(`<a class="chip bad" href="${esc(p.assets.url || p.url)}" target="_blank" title="The PR's asset build failed: open the run. Chat → Rebuild assets fixes it.">⚠ #${p.number} assets build failed</a>`);
   return out.join("");
 }
 

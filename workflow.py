@@ -44,6 +44,9 @@ BOARD_ORDER = [STATUS[r] for r in _get("jira.board_order")]               # the 
 ACTIVE = (REVIEW, DEV)                                                     # statuses whose review threads are watched
 JQL = _get("jira.jql")                                                     # the owner's open tickets
 WATCH_TYPES = tuple(_c.get("jira", {}).get("watch_issue_types") or ())     # issue types the feedback watch reads; () = all
+# The PR check that builds the page assets (owner 2026-11-25): when it fails, the card shows it and the chat offers
+# "Rebuild assets". "" = the team has no such check (the feature is off).
+ASSET_CHECK = str((_c.get("github") or {}).get("asset_build_check") or "").strip()
 
 
 def jira_status(name: str) -> str:
